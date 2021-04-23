@@ -1,0 +1,233 @@
+# Using :httpc securely
+
+## Introduction
+
+There are many HTTP clients in the Erlang and Elixir ecosystem,
+in fact OTP itself comes with one included - [`:httpc`](http://erlang.org/doc/man/httpc.html).
+
+This raises the question which client to use and whether `:httpc` is good enough
+if all you need is a simple request here and there. This notebook explores
+relevant security concerns and highlights how to address them when using `:httpc`.
+
+## Setup
+
+Let's start by installing [:certifi](https://github.com/certifi/erlang-certifi),
+it is gonna come in handy later on.
+
+```elixir
+Mix.install([
+  {:certifi, "~> 2.6"}
+])
+```
+
+We will also need two applications, `:inets` to use `:httpc`
+and `:ssl` to make secure requests.
+
+To ensure the results are not subject to any kind of caching
+within the applications, we will restart them before every
+request in question.
+
+```elixir
+defmodule Utils do
+  @apps [:inets, :ssl]
+
+  def load_apps() do
+    for app <- @apps do
+      :ok = Application.ensure_loaded(app)
+    end
+  end
+
+  def restart_apps() do
+    for app <- @apps do
+      Application.stop(app)
+      Application.ensure_all_started(app)
+    end
+  end
+end
+
+Utils.load_apps()
+```
+
+## Making the first request
+
+Using `:httpc` is straightforward!
+
+```elixir
+Utils.restart_apps()
+
+url = "https://elixir-lang.org"
+
+# Same as:
+# :httpc.request(url)
+
+:httpc.request(:get, {url, []}, [], [])
+```
+
+## Security concerns
+
+The primary job of TLS is to encrypt the traffic and that's what happens
+whenever you make requests to `https://` URL. This way attackers who manage
+to hijack the traffic cannot figure out the contents.
+
+However, this only makes sure you are securely talking to *someone*,
+but who their are is not necessarily clear! Fortunately TLS supports
+so called *peer verification* - a mechanism for verifying that this *someone*
+is actually who you expect them to be.
+
+Just to give an example, let's say you make a request to **elixir-lang.org**.
+An attacker could hijack the TCP connection and impersonate **elixir-lang.org**
+by responding to the connection request. Now they need to present a SSL certificate
+and generally there are two options with that.
+
+### Self-signed certificate
+
+This certificate would correctly indicate **elixir-lang.org** as the certificate subject,
+but would be signed by an untrusty authority (likely the attacker himself).
+
+To eliminate this case, you need to check that the Certificate Authority (CA)
+matches one of well-known, trustworthy authorities.
+
+### Genuine certificate
+
+This certificate would be signed by a well-known authority,
+but it would indicate **attacker.org** as the certificate subject,
+because the attacker would need control over said host to obtain the
+genuine certificate.
+
+To eliminate this case, you need to check if the certificate subject
+matches the hostname you were initially sending a request to.
+
+## Securing :httpc
+
+By default `:httpc` doesn't perform any of the aforementioned checks, which means
+it's not secure with the defualt configuration! Actually, even separate HTTP packages
+may not necessarily do it by default, so always make sure to check for that.
+
+Let's see what happens when we send a request and server's SSL certificate
+doesn't come from a trustworthy CA:
+
+```elixir
+Utils.restart_apps()
+
+# This website serves an SSL certificate signed by untrusty CA
+url = "https://untrusted-root.badssl.com"
+http_opts = []
+
+:httpc.request(:get, {url, []}, http_opts, [])
+```
+
+As you can see the request does succeed, which is far from what we want.
+
+Now, let's try with *peer verification*:
+
+```elixir
+Utils.restart_apps()
+
+# A list of well-known CA authorities (or more specifically - their own certificates)
+cacerts = :certifi.cacerts()
+
+# This website serves an SSL certificate signed by untrusty CA
+url = "https://untrusted-root.badssl.com"
+
+http_opts = [
+  ssl: [
+    verify: :verify_peer,
+    cacerts: cacerts
+  ]
+]
+
+:httpc.request(:get, {url, []}, http_opts, [])
+```
+
+Good! The certificate authority doesn't match any of the well-known authorities,
+and we got an error - this way we are secured from the attacker presenting
+an ingenuine certificate (case 1). As you can see we used the `:certifi` package
+simply to get the up-to-date list of trustworthy authorities.
+
+Additionally, the `:verify_peer` option automatically enables hostname check (case 2).
+Let's have a look:
+
+```elixir
+Utils.restart_apps()
+
+# This website serves an SSL certificate signed by trustworthy CA,
+# but the certificate subject hostname doesn't match the one in the URL.
+url = "https://wrong.host.badssl.com"
+
+:httpc.request(:get, {url, []}, http_opts, [])
+```
+
+There is however a tiny detail regarding hostname checks. The default matching
+doesn't account for some certificates that use wildcard in the subject hostname.
+
+```elixir
+Utils.restart_apps()
+
+url = "https://docs.netlify.com"
+
+:httpc.request(:get, {url, []}, http_opts, [])
+```
+
+Fortunately that's easy to solve by customizing the check:
+
+```elixir
+Utils.restart_apps()
+
+url = "https://docs.netlify.com"
+
+http_opts = [
+  ssl: [
+    verify: :verify_peer,
+    cacerts: cacerts,
+    customize_hostname_check: [
+      match_fun: :public_key.pkix_verify_hostname_match_fun(:https)
+    ]
+  ]
+]
+
+:httpc.request(:get, {url, []}, http_opts, [])
+```
+
+And here we have it, just a few lines of configuration and we can make requests
+with `:httpc` securely! 🐈
+
+## tl;dr
+
+Whenever you use `:httpc` in your application, make sure to provide basic security options.
+
+```elixir
+url = "https://elixir-lang.org"
+
+# A list of well-known CA authorities (or more specifically - their own certificates).
+cacerts = :certifi.cacerts()
+
+http_opts = [
+  ssl: [
+    verify: :verify_peer,
+    cacerts: cacerts,
+    customize_hostname_check: [
+      match_fun: :public_key.pkix_verify_hostname_match_fun(:https)
+    ]
+  ]
+]
+
+:httpc.request(:get, {url, []}, http_opts, [])
+```
+
+## Final notes
+
+Given that `:httpc` is availble out of the box in Erlang and Elixir, you may consider
+choosing it for non-critical usage. If your use case requires continuous and performant
+HTTP requests, you definitely need a more scalable client, built with parallelism in mind.
+Nonetheless, whichever client you pick, make sure it offers the necessary security.
+
+Primary references:
+
+* [EEF Security notes on `:httpc`](https://erlef.github.io/security-wg/secure_coding_and_deployment_hardening/inets)
+* [EEF Security notes on `:ssl` options](https://erlef.github.io/security-wg/secure_coding_and_deployment_hardening/ssl.html)
+* [Erlang `:ssl` module](https://erlang.org/doc/man/ssl.html)
+
+Related readings:
+
+* [The great HTTPS client shoot-out](https://blog.voltone.net/post/7)
+* [Elixir: Do you have HTTP requests? You are doing them wrong!](https://virviil.github.io/2018/04/06/elixir-do-you-have-http-requests-you-are-doing-them-wrong/)
