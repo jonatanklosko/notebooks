@@ -172,7 +172,7 @@ Let's have a look at some real world examples.
 
 ### StringIO
 
-Elixir itself comes with the [StringIO](https://hexdocs.pm/elixir/StringIO.html) device,
+Elixir itself comes with the [`StringIO`](https://hexdocs.pm/elixir/StringIO.html) device,
 which buffers all the outputs and then returns them as a string.
 
 ```elixir
@@ -183,7 +183,7 @@ IO.write(pid, " you")
 StringIO.flush(pid)
 ```
 
-More notably, it's exatlywhat `ExUnit.CaptureIO` uses under the hood!
+More notably, it's exatly what `ExUnit.CaptureIO` uses under the hood!
 
 ```elixir
 ExUnit.CaptureIO.capture_io(fn ->
