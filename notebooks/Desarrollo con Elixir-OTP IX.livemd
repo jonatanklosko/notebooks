@@ -1,0 +1,52 @@
+# Desarrollo con Elixir/OTP IX
+
+## Atributos del módulo
+
+Como aprendimos en la anterior lección, para poder entregar una página primero hemos de obtener la ruta absoluta hasta el directorio de la misma.
+
+Los módulos pueden poseer **atributos**. Estos atributos se definen justo al comienzo del módulo y generalmente se usan para asociacr metadatos al módulo.
+
+Elixir posee 2 atributos de módulo reservados para documentar módulos y funciones. La documentación del módulo se sitúa al inicio del módulo, siendo el nombre del atributo "moduledoc", del cual veremos su sintaxis a continuación.
+
+```elixir
+defmodule Servy.Handler do
+
+  @moduledoc "Handles HTTP request."
+
+  @doc "Transforms de request into a response."
+  def handle(request) do
+    request
+    |> parse
+    |> rewrite_path
+    |> log
+    |> route
+    |> track
+    |> format_response
+  end
+
+  @doc "Logs 404 requests."
+    def track(%{status: 404, path: path} = conv) do
+      IO.puts "Warning: #{path} is on the loose!"
+      conv
+    end
+
+```
+
+Parte clave de la sintaxis de los atributos del módulo es la "**@**" inicial, que los identifica.
+
+El atributo "@doc" documenta sobre la cual se encuentra. El mismo atributo puede ser usado para documentar varias funciones en un mismo módulo.
+
+Aunque Elixir posea ciertos atributos ya determinados, somos libres de añadir atributos arbitrarios o personalizados para nuestro módulo. Otra forma bastante común de usar los atributos es la generación de constantes. El valor del atributo será el resultado de la expresión que acompaña al carácter "@", y podrá ser usado en posteriores ocasiones llamándolo por su nombre.
+
+```elixir
+@pages_path Path.expand("../../pages", __DIR__)
+def route(%method: "GET", path: "/about"} = conv) do
+  @pages_path
+  |> Path.join("about.html")
+  |> File.read
+  |> handle_file(conv)
+end
+
+```
+
+Esta última característica de los módulos es la razón por la cual se suelen definir al principio del módulo, pues el uso de ellos puede ser requeridos pòr diversas funciones a lo largo de todo el código.

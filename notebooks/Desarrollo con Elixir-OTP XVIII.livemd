@@ -1,0 +1,177 @@
+# Desarrollo con Elixir/OTP XVIII
+
+## Renderizando JSON
+
+Ya hemos conseguido que todas nuestras respuestas sean devueltas en HTML, pero digamos que ahora queremos devolver JSON para una petición de API. Para ello vamos a utilizar una librería externa de JSON que no está implementada por defecto en Elixir.
+
+En el texto que vemos a continuación, podemos apreciar que cuando nosotros obtenemos una petición para, por ejemplo "/api/bears", queremos responder con una respuesta cuyo contenido es del tipo "application/json". El cuerpo de la respuesta, por tanto, es una lista de objetos JSON que representa todos los osos.
+
+```elixir
+test "GET /api/bears" do
+  request = """
+  GET /api/bears HTTP/1.1\r
+  Host: example.com\r
+  User-Agent: ExampleBrowser/1.0\r
+  Accept: */*\r
+  \r
+  """
+
+  response = handle(request)
+
+  expected_response = """
+  HTTP/1.1 200 OK\r
+  Content-Type: application/json\r
+  Content-Length: 605\r
+  \r
+  [{"type":"Brown","name":"Teddy","id":1,"hibernating":true},
+   {"type":"Black","name":"Smokey","id":2,"hibernating":false},
+   {"type":"Brown","name":"Paddington","id":3,"hibernating":false},
+   {"type":"Grizzly","name":"Scarface","id":4,"hibernating":true},
+   {"type":"Polar","name":"Snow","id":5,"hibernating":false},
+   {"type":"Grizzly","name":"Brutus","id":6,"hibernating":false},
+   {"type":"Black","name":"Rosie","id":7,"hibernating":true},
+   {"type":"Panda","name":"Roscoe","id":8,"hibernating":false},
+   {"type":"Polar","name":"Iceman","id":9,"hibernating":true},
+   {"type":"Grizzly","name":"Kenai","id":10,"hibernating":false}]
+  """
+
+  assert remove_whitespace(response) == remove_whitespace(expected_response)
+end
+```
+
+Para que el test funcione, debemos recopilar todas los *structs* de osos como JSON, para lo cual Elixir no tiene un módulo por defecto.
+
+El administrador de paquetes de Elixir se llama "**Hex**" y podemos acceder a él a través del siguiente enlace:
+[https://hex.pm/](https://hex.pm/)
+
+Si buscamos en Hex "encode json" encontramos la librería **poison**, también funcional para Phoenix. La web nos da el código que tenemos que usar para instalarla en nuestro archivo "mix.exs":
+
+En "mix.exs" agregamos este código en el apartado "**deps**" que contiene las dependencias recogidas en nuestro proyecto:
+
+```elixir
+defmodule.MixFile do
+  use Mix.Project
+
+  def project do
+    [
+      app: servy,
+      version: "0.1.0",
+      elixir: "~> 1.5",
+      start_permanent: Mix.env == :prod,
+      deps: deps()
+
+    ]
+  end
+
+  #...
+
+  defp deps do
+    [
+      {:poison: "~> 3.1"}
+    ]
+  end
+
+end
+```
+
+El primer parámetro de la dependencia hace referencia a la librería en cuestrión que deseamos instalar y el segundo a las versiones de la misma. El primero de los dos números indica la versión máxima que queremos instalar y el segundo, la mínima.
+
+Una vez que la tenemos definida, hemos de ejecutar la función que descarga las librerías:
+
+```elixir
+mix(deps.get)
+```
+
+Ahora bien, vamos a convertir nuestra lista de osos en JSON:
+
+```elixir
+Poison.encode!(bears)
+```
+
+Tan sencillo como eso, obtenemos una lista de objetos JSON.
+
+Sabiendo cómo realizar la conversión, resta crear un controlador y una ruta para nuestra API. Crearemos un nuevo directorio para la API, llamado "api", en Servy. Dentro de este directorio vamos a crear el fichero "bear_controller.ex". Como bien sabemos ya existe un fichero con este nombre pero se localiza directamente en Servy.
+
+```elixir
+defmodule Servy.Api.BearController do
+
+  def index(conv) do
+    json = 
+      Servy.Wildthings.list_bears()
+      |> Poison.encode!
+
+      €{ conv | status: 200, resp_body: json}
+  
+  end
+
+  
+
+end
+```
+
+En "handler.ex" hemos de moficiar la función *route* para adaptarla a las modificaciones que hemos realizado dentro de *api*.
+
+```elixir
+# ...
+
+def route(%Conv{method: "GET", path: "/api/bears"} = conv) do
+  Servy.Api.BearController.index(conv)
+end
+
+# ....
+```
+
+Tras ejecutar este código recibimos un error debido a la presencia de un texto HTML que no concuerda con lo que estamos procesando en estos momentos, JSON. Para solucionar esto hemos de volver a nuestro módulo *Conv* y agregar un paso más a nuestro pipeline.
+
+```elixir
+defmodule Servy.Conv do
+  defstruct method: "",
+  path: ""m
+  params: %{},
+  headers: %{}, 
+  response_content_type: "text/html",
+  resp_body: "",
+  status: nil
+
+  #...
+
+end
+```
+
+Esta última modificación acarrea la necesidad de actualizar la función *format_response* de "handler.ex":
+
+```elixir
+# ...
+
+def format_response(%Conv{} = conv) do
+  """
+  HTTP/1.1 #{Conv.full_status(conv)}\r
+  Content-Type: #{conv.resp_content_type}\r
+  Content-Length: #{String.length(conv.resp_body)}\r
+  \r
+  #{conv.resp_body}
+  """
+end
+
+# ...
+```
+
+Por último, incluímos la variable "resp_content_type" en el controlador:
+
+```elixir
+defmodule Servy.Api.BearController do
+
+  def index(conv) do
+    json = 
+      Servy.Wildthings.list_bears()
+      |> Poison.encode!
+
+      €{ conv | status: 200, resp_content_type: "application/json", resp_body: json}
+  
+  end
+
+
+end
+```
+
+Gracias a esto último, por defecto las funciones tomarán "text/html" en el caso de devolver JSON, se antepone esta,

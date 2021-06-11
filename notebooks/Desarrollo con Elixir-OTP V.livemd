@@ -1,0 +1,83 @@
+# Developing with Elixir/OTP V
+
+## Cláusulas funcionales
+
+Pese a que hemos hecho grandes progresos en nuestro servidor, de momento solo puede manejar una petición HTTP. Es el momento de crear una nueva.
+Ahora, queremos añadir **logging** al pipeline para ir grabando todo nuestro proceso.
+Esto lo haremos entre *parse* y *route* del pipeline. Aquí, para que el código se ejecute correctamente podemos definir cualquier función que tome un map de conversación y devuelva otro. Así pues, introducimos "|> log" en el pipeline y procedemos a la definición de dicha función.
+
+```elixir
+def log(conv), do: IO.inspect(conv)
+```
+
+Podemos ver que la notación utilizada es considerablemente diferente a la que veníamos usando hasta ahora. En primer lugar, debemos de saber que la función "IO.inspect" inspecciona el contenido de la variable y lo muestra, luego no es necesario imprimirla de nuevo. En esta notación, la adición de "," antes del "do" y de ":" después del mismo permite la eliminación de la línea "end" final, y la ejecución de la función requerida en una sola línea.
+
+Para que la respuesta ofrecida varíe en función de la ruta que estemos examinando hemos de modificar la función *route*.
+
+```elixir
+def route(conv) do
+  if conv.path == "/wildthings" do
+    %{conv | resp_body: "Bears, Lions, Tigers"}
+  else
+    %{conv | resp_body: "Teddy, Smokey, Paddington"}
+  end
+end
+```
+
+Con esta función *route*, dependiendo de la ruta que contenga la petición obtendremos diferentes valores para resp_body.
+
+En Elixir es más eficiente controlar el flujo de datos y utilizar funciones y la coincidencia de patrones. En este caso, usaremos la segunda de estas opciones para encontrar coincidencias en la petición entrante y ejecutar la función más apropiada para completar "resp_body".
+
+```elixir
+def route(conv, "/wildthings") do
+  %{conv | resp_body: "Bears, Lions, Tigers"}
+end
+
+def route(conv, "/bears") do
+  %{conv | resp_body: "Teddy, Smokey, Paddington"}
+end
+```
+
+Ahora pues tenemos dos definiciones de funciones con el mismo nombre y número de parámetros. Estas funciones "coincidentes" reciben el nombre de **cláusulas**. 
+Si una función tiene muchas cláusulas, Elixir automáticamente irá probando cada una de las cláusulas hasta que una concuerde con la petición.
+
+En el pipeline, *route* tan solo posee 1 parámetro, a diferencia de los 2 que tienen las funciones que acabamos de definir.
+Para solucionar esto, modificaremos el contenido de la función *route* inicial para llamar a un método que tenga 2 parámetros (conv, conv.path).
+
+Quedaría de la siguiente manera:
+
+```elixir
+def route(conv) do
+  route(conv, conv.path)
+end
+
+def route(conv, "/wildthings") do
+  %{conv | resp_body: "Bears, Lions, Tigers"}
+end
+
+def route(conv, "/bears") do
+  %{conv | resp_body: "Teddy, Smokey, Paddington"}
+end
+```
+
+Sabiendo que podemos caracterizar el funcionamiento de la respuesta de esta manera, procedamos a incluir también el método como patrón de coincidencia.
+
+Veamos el cambio:
+
+```elixir
+def route(conv) do
+  route(conv, conv.method, conv.path)
+end
+
+def route(conv, "GET", "/wildthings") do
+  %{conv | resp_body: "Bears, Lions, Tigers"}
+end
+
+def route(conv, "/bears") do
+  %{conv | resp_body: "Teddy, Smokey, Paddington"}
+end
+```
+
+Si la petición contuviese algún elemento que no esté definido en ninguna de las cláusulas, Elixir devuelve un error puesto que busca coicidencias entre todas las funciones pero no la encuentra en ninguna. En la siguiente lección veremos cómo resolver este problema.
+
+La coincidencia de patrones elimina la necesidad de utilizar condicionales y ofrece la posibilidad de procesar más peticiones entrantes mediante funciones cortas y optimizadas.

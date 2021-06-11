@@ -1,0 +1,211 @@
+# Desarrollo con Elixir/OTP XXIII
+
+## Procesos de Servidor con Estado (I)
+
+Para cualquier evento, ¿cómo va a manejar nuestro servidor las pledges? 
+Entenderemos como "pledge" a un conjunto formado por un nombre y un valor numérico. Para crear una pledge, un nombre y una cantidad van a ser enviadas a nuestro servidor como una petición POST. Enrutaremos esa petición a la función de creación de un controlador de pledges el cual enviará de vuelta la información de la pledge a un servicio externo a través de su API. 
+Permitiremos que el servicio externo controle todos los detalles que queramos tener en cuenta.
+
+Cuando queramos obtener todas las plegeds deberemos enviar una petición GET a nuestro servidor. Enrutaremos esa petición a la función *index* del controlador de Pledges, que buscará las pledges en el servicio externo.
+
+Si estuviésemos interesados en mostrar tan solo algunas de las pledges según un criterio arbitrario deberíamos crear una caché en la que se irán guardando aquellas que satisfagan la condición que estábamos definiendo de manera arbitraria.
+Esta caché se irá actualizando de manera sistemática conforme vayan actualizándose las pledges del servicio externo, añádiéndose nuevas y eliminándose las antiguas. Ni que decir queda que el contenido de la caché es muy reducido.
+
+Podemos extraer el contenido de la caché enviando una petición GET a la misma.
+
+En "handler.ex" hemos definido 2 nuevas rutas. Una de ellas para manejar la petición GET sobre "/pledges" y otra para le petición "POST" sobre "/pledges".
+
+```elixir
+# ...
+def route(%Conv{method: "POST", path: "/pledges"} = conv) do
+  Servy.PledgeController.create(conv, conv.params)
+end
+
+def route(%Conv{method: "GET", path: "/pledges"} = conv) do
+  Servy.PledgeController.index(conv)
+end
+
+# ...
+```
+
+Por otro lado, también hemos creado el controlador de pledge en "pledge_controller.ex" con el siguiente código:
+
+```elixir
+defmodule Servy.PledgeController do
+  def create(conv, %{"name" => name, "amount" => amount}) do
+    # Sends the pledge to the external service and caches it
+    create_pledge(name, String.to_integer(amount))
+
+    %{conv | status: 201, resp_body: "#{name} pledged #{amount}!"}
+  end
+
+  def index(conv) do
+    # Gets the recent pledges from the cache
+    pledges = recent_pledges()
+
+    %{conv | status: 200, resp_body: inspect(pledges)}
+  end
+end
+```
+
+La función *create* captura el nombre y la cantidad y envía la información al servicio externo y lo guarda en la caché. Esto lo haremos con la función *create_pledge*.
+
+En la función *index* se define que en la variable "pledges" se acumularán las "pledges" más recientes de la caché.
+
+Así pues, hemos de definir las funciones *create_pledge* y *recent_pledges*. Lo haremos en un nuevo módulo llamado "pledge_server".
+
+```elixir
+defmodule Servy.PledgeController do
+  def create(conv, %{"name" => name, "amount" => amount}) do
+    # Sends the pledge to the external service and caches it
+    Servy.PledgeServer.create_pledge(name, String.to_integer(amount))
+
+    %{conv | status: 201, resp_body: "#{name} pledged #{amount}!"}
+  end
+
+  def index(conv) do
+    # Gets the recent pledges from the cache
+    pledges = Servy.PledgeServer.recent_pledges()
+
+    %{conv | status: 200, resp_body: inspect(pledges)}
+  end
+end
+```
+
+```elixir
+defmodule PledgeServer do
+  def create_pleedge(name, amount) do
+    {:ok, id} = send_pledge_to_service(name, amount)
+
+    # Cache the pledge:
+    [{"larry", 10}]
+  end
+
+  def recent_pledges do
+    # Returns the most recent pledges (cache)
+    [{"larry", 10}]
+  end
+
+  defp send_pledge_to_service(_name, _amount) do
+    # CODE GOES HERE TO SEND PLEDGE TO EXTERNAL SERVICE
+    {:ok, "pledge-#{:rand.uniform(1000)}"}
+  end
+end
+```
+
+La función *recent_pledges* ha de devolver las pledges más recientes, por lo que tendrá que devolver aquellas que se encuentran alojadas en la caché. Nuestro problema ahora mismo es saber dónde vamos a conservar los datos de la caché para que la función *create_pledge* pueda actualizarla y *recent_pledges* tomar sus datos. 
+En Elixir, los procesos pueden tener un estado. En el módulo "PledgeServer" vamos a definir una función llamada *listen_loop* que continuamente recive y maneja mensajes en un bucle sin fin e inicializará un proceso que ejecuta la función. En ese proceso conservaremos un estado interno, la caché de pledges recientes.
+
+Cuandoo comienza el proceso, la lista estará vacía y conforme vayamos obteniendo las pledges se enviarán al proceso del servidor, el cual enviará la información de la pledgfe hasta el servicio externo. Mientras esto ocurre, el proceso del servidor añadirá las pledges a la caché. El proceso del servidor enviará un mensaje de vuelta indicando que la pledge se ha creado o no de manera satisfactoria. 
+El proceso de tratamiento de la petición envía una respuesta HTTP de vuelta al cliente, que por ejemplo puede ser un buscador; terminando así el proceso. Esto ocurrirá de manera sucesiva.
+
+Si ahora se envía una petición GET al proceso del servidor este devolverá el contenido de la caché.
+
+## Procesos de Servidor con Estado (II)
+
+Necesitamos incorporar una función que reciba de manera continua y sea capaz de administrar mensajes de manera indefinida.
+
+```elixir
+defmodule PledgeServer do
+  def listen_loop(state) do
+    IO.puts("\nWaiting for a message...")
+
+    recieve do
+      {:create_pledge, name, amount} ->
+        {:ok, id} = send_pledge_to_service(name, amount)
+        new_state = [{name, amount} | state]
+        IO.puts("#{name} pledged #{amount}!")
+        IO.puts("New state is #{inspect(new_state)} ")
+        listen_loop(new_state)
+    end
+  end
+
+  def create_pleedge(name, amount) do
+    {:ok, id} = send_pledge_to_service(name, amount)
+
+    # Cache the pledge:
+    [{"larry", 10}]
+  end
+
+  def recent_pledges do
+    # Returns the most recent pledges (cache)
+    [{"larry", 10}]
+  end
+
+  defp send_pledge_to_service(_name, _amount) do
+    # CODE GOES HERE TO SEND PLEDGE TO EXTERNAL SERVICE
+    {:ok, "pledge-#{:rand.uniform(1000)}"}
+  end
+end
+```
+
+Hemos de recordar que la función *recieve* tan solo devuelve un mensaje del buzón, por lo que necesitaremos llamar de manera recursiva a la función *listen_loop* para que se acceda a todos los mensajes mientras los haya.
+Introduciremos como parámetro para la función *listen_loop* una lista que será la que devuelva todo el contenido de la caché. Así pues, cada vez que se recibe un nuevo mensaje con una pledge con nombre y cantidad, esta se introduce en una lista y se llama de nuevo a la misma función tomando ahora como parámetrro la lista recién actualizada e incorporándole la siguiente pledge recibida como mensaje.
+
+```elixir
+defmodule PledgeServer do
+  def listen_loop(state) do
+    IO.puts("\nWaiting for a message...")
+
+    recieve do
+      {:create_pledge, name, amount} ->
+        {:ok, id} = send_pledge_to_service(name, amount)
+        new_state = [{name, amount} | state]
+        IO.puts("#{name} pledged #{amount}!")
+        IO.puts("New state is #{inspect(new_state)} ")
+        listen_loop(new_state)
+
+      {sender, :recent_pledges} ->
+        send(sender, {:response, state})
+        IO.puts("Sent pledges to #{inspect(sender)}")
+        listen_loop(state)
+    end
+  end
+
+  # ....
+  def create_pleedge(name, amount) do
+    {:ok, id} = send_pledge_to_service(name, amount)
+
+    # Cache the pledge:
+    [{"larry", 10}]
+  end
+
+  def recent_pledges do
+    # Returns the most recent pledges (cache)
+    [{"larry", 10}]
+  end
+
+  defp send_pledge_to_service(_name, _amount) do
+    # CODE GOES HERE TO SEND PLEDGE TO EXTERNAL SERVICE
+    {:ok, "pledge-#{:rand.uniform(1000)}"}
+  end
+
+  # ...
+end
+```
+
+Para obtener las pledges recientes en una sesión IEx podemos enviar al proceso del servidor un mensaje utilizando "*self()*" puesto que queremos que se envíe la respuesta al propio proceso de iex como primer parámetro ":recent_pledges". Obtendremos de esta manera el PID del proceso al cual han sido enviadas las pledges. De manera que, si ahora obtenemos el contenido del mensaje mediante la función "*info*" obtendremos el contenido de la lista de pledges que creamos con anterioridad. Para obtener, como tal, la lista resultante deberemos ejecutar la función *receive*.
+
+Hemos de implementar esto en el controlador de pledges para que se ejecute tal y como hemos ejecutado nosotros manualmente en la sesión IEx.
+
+```elixir
+defmodule Servy.PledgeController do
+  def create(conv, %{"name" => name, "amount" => amount}) do
+    # Sends the pledge to the external service and caches it
+    create_pledge(name, String.to_integer(amount))
+
+    %{conv | status: 201, resp_body: "#{name} pledged #{amount}!"}
+  end
+
+  def index(conv) do
+    # Gets the recent pledges from the cache
+    pledges = recent_pledges()
+
+    %{conv | status: 200, resp_body: inspect(pledges)}
+  end
+end
+```
+
+Deberemos implementar, a continuación, las funciones *create_pledge* y *recent_pledges*.
+
+## Procesos de Servidor con Estados (III)

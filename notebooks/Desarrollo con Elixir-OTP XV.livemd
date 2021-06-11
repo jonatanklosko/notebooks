@@ -1,0 +1,174 @@
+# Desarrollo con Elixir/OTP XV
+
+## Comprensión
+
+El siguiente paso en nuestro aprendizaje es generar contenido de manera dinámica renderizando plantillas de archivos. Las plantillas que usaremos serán una mezcla de HTML y código Elixir, y aplicaremos la comprensión para conseguir que el código de la plantila sea bueno y conciso.
+
+Vamos a crear un nuevo directorio para las plantillas llamado "templates". Dentro del mismo, por el momento vamos a crear una plantilla para la función *index* en un archivo llamado "index.eex". La extensión **eex** hace referencia a un archivo de Elixir incrustado (embedded Elixir).
+
+```elixir
+<h1>All The Bears!</h1>
+
+<ul>
+  <li>Name - Brown</li>
+  <li>Name - Grizzly</li>
+  <li>Name - Polar</li>
+</ul>
+```
+
+De la misma forma, creamos una plantilla para *show*:
+
+```elixir
+<h1>Show Bear</h1>
+<p>
+Is Name hibernating? <strong>true/false</strong>
+</p>
+```
+
+Necesitamos leer estas plantillas y rellenar los valores de forma dinámica, para lo cual Elixir posee un módulo que permite realizar este trabajo de manera cómoda. Este módulo recibe el nombre de **EEx**.
+
+Si llamamos a la función *h* sobre EEx obtendremos información acerca de todas las funciones que contiene el módulo. Si en concreto accedemos a la información de la función *eval_file* podemos ver que recibe posee un campo "foo <%= bar %>" cuyo valor se sustituirá por el contenido de valor de "bar", quedando "foo baz".
+
+Para empezar a trabajar necesitamos obtener la ruta absoluta hasta el archivo plantilla como hicimos hace algunas lecciones en "handler.ex".
+
+```elixir
+defmodule Servy.BearController do
+
+  alias Servy.Wildthings
+  alias Servy.Bear
+
+  @templates_path Path.expand("../../templates", __DIR__)
+
+  #...
+
+  def index(conv) do
+    items =
+      Wildthings.list_bears()
+      |> Enum.sort(&Bear.order_asc_by_name/2)
+
+      content = 
+        @templates_path
+        |> Path.join("index.eex")
+        |> EEx.eval_file(bears: bears)
+      %{ conv | status: 200, resp_body: content}
+  end
+
+  #...
+```
+
+Volvemos a la plantilla "index.eex" en la cual vamos a programar un bucle que incorpone cada elemento de la lista de *structs* y genere un objeto HTML ("li") por cada uno.
+
+```elixir
+<h1>All The Bears!</h1>
+
+<ul>
+  <%= Enum.map(bears, fn(bear) -> %>
+  <li> <%= bear.name %> - <%= bear.type %></li>
+  <% end) %>
+</ul>
+```
+
+En este código interpolamos el nombre y el tipo de oso y lo aplicamos a cada elemento de la lista utilizando un map que contiene como parámetro la función anónima que interpola las variables mencionadas anteriormente.
+
+No obstante, este código puede ser optimizado mediante el uso de lo que vamos a conocer como **comprensión**. Veamos un breve ejemplo antes de aplicarlo a nuestro código.
+
+Si ejecutamos lo siguiente, obtenemos una lista [3,6,9], pues la función anónima multiplica cada elemento de la entrante por 3.
+
+```elixir
+Enum.map([1, 2, 3], fn x -> x * 3 end)
+```
+
+Del mismo modo, el siguiente código realiza la misma tarea:
+
+```elixir
+for x <- [1, 2, 3], do: x * 3
+```
+
+A esta expresión la llamamos **generador**. Itera en la lista y ejecuta la función para cada uno de los elementos, devolviendo los resultados en una lista.
+
+Atendamos a otro ejemplo en el que se obtiene la combinación de tallaje y color de prendas de ropa:
+
+```elixir
+for size <- ["S", "M", "L"], color <- [:red, :blue], do: {size, color}
+```
+
+
+
+En esta expresión tenemos dos generadores, uno para la talla y otro para el color. Por último, la expresión los coloca en una tupla. Tras ejecutar el código obtendríamos:
+
+[{"S", :red}, {"S", :blue}, {"M", :blue}, {"L", :red}, {"L"}, :blue}]
+
+Apliquemos esto ahora a nuestra plantilla:
+
+```elixir
+<h1>All The Bears!</h1>
+
+<ul>
+  <%= for bear <- bears do%>
+  <li> <%= bear.name %> - <%= bear.type %></li>
+  <% end %>
+</ul>
+```
+
+La ejecución de este código nos devolvería el mismo resultado que el último que definimos para la plantilla "index.eex".
+
+Para la plantilla "show.eex" también tenemos que generar contenido de manera dinámico, para lo cual hemos de actualizar la función *show* en el módulo "*bear_controller*:
+
+```elixir
+# ...
+
+def show(conv, %{"id" => id}) do
+  bear = Wildthings.get_bear(id)
+
+  content =
+    @templates_path
+    |> Path.join("show.eex")
+    |> EEx.eval_file(bear: bear)
+
+  %{conv | status: 200, resp_body: "content"}
+end
+```
+
+Y ahora implementar la plantilla "show.eex".
+
+```elixir
+<h1>Show Bear</h1>
+<p>
+Is <%= bear.name %> hibernating? <strong> <%= bear.hibernating %> </strong>
+</p>
+```
+
+Hemos de darnos cuenta que con las últimas modificaciones que hemos realizado en el módulo "*bear_controller"* hemos generado cierta redundancia que deberíamos eliminar. Para ello, vamos a definir una función llamada *render* que pueda utilizarse tanto para "show.eex" como para "index.eex":
+
+```elixir
+# ...
+
+defp render(conv, template, bindings \\ []) do
+  content =
+    @templates_path
+    |> Path.join(template)
+    |> EEx.eval_file(bindings)
+
+  %{conv | status: 200, resp_body: content}
+end
+
+def index(conv) do
+  items =
+    Wildthings.list_bears()
+    |> Enum.sort(&Bear.order_asc_by_name/2)
+
+  render(conv, "index.eex", bears: bears)
+end
+
+def show(conv, %{"id" => id}) do
+  bear = Wildthings.get_bear(id)
+
+  render(conv, "show.eex", bear: bear)
+end
+
+# ...
+```
+
+El operador "\\" nos permite establecer un parámetro por defecto en Elixir.
+
+Claramente hemos optimizado el código y hemos visto una forma mucho más cómoda y concisa de programar funciones para obtener un mismo resultado, la **comprensión**.

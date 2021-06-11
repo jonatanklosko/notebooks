@@ -1,0 +1,360 @@
+# Desarrollo con Elixir/OTP XIV
+
+## "Slicing" y "Dicing" con Enum (1)
+
+Por el momento, cuando recibimos una petición nuestra app responde con un *string*, pero siendo esta un servidor deberíamos de responder con HTML. Para ello, utilizaremos algunas de las funciones de transofmración que podemos encontrar en el módulo "**Enum**".
+
+Primero organizaremos nuestro código para que se asemeje más a un marco de trabajo web que siga el patrón **MVC** como **Phoenix** ó **Rails**.
+
+Normalmente, en un entorno web las rutas simplemente delegan en un controlador. Vamos a crear un controlador llamado "bear_controller" en un nuevo archivo. No podemos olvidar renombrarlo con un **alias** en el archivo "handler.ex".
+
+```elixir
+defmodule Servy.BearController do
+  def index(conv) do
+    %{conv | status: 200, resp_body: "Teddy, Smokey, Paddington"}
+  end
+
+  def show(conv, %{"id" => id}) do
+    %{conv | status: 200, resp_body: "Bear #{id}"}
+  end
+
+  def create(conv, %{"name" => name, "type" => type} = params) do
+    %{conv | status: 201, resp_body: "Created a #{"type"} bear named #{name}!"}
+  end
+end
+```
+
+```elixir
+defmodule Servy.Handler do
+
+
+  @moduledoc "Handles HTTP requests."
+
+  alias Servy.Conv
+  alias Servy.BearController
+
+  #...
+
+
+  def route(%Conv{ method: "GET", path: "/bears" } = conv) do
+    BearController.index(conv)
+  end
+
+  def route(%Conv{ method: "GET", path: "/bears/" <> id} = conv) do
+    params = Map.put(conv.params, "id", id)
+    BearController.show(conv, params)
+  end
+
+  def route(%Conv{method: "POST", path: "/bears" = conv) do
+    BearController.create(conv, conv.params)
+  end
+
+  #...
+```
+
+Como podemos ver, parte del código que teníamos en las diferentes cláusulas de la función *route* ahora se ha convertido y se ha organizado dentro de funciones definidas en el controlador. Para cada una de las cláusulas, se ha definido una función que obtiene como parámetros el map de conversación que llevamos usando todo este tiempo y los parámetros convenientes de "conv.params" seleccionados mediante coincidencia de patrones.
+
+Los nombres con los que estamos trabajando "Teddy", "Smokey", etc, tienen atributos múltiples con los que podemos trabajar definiendo un *struct* con campos específicos. Vamos a definir un *struct* para "bear" en el archivo "bear.ex". También vamos a crear un nuevo módulo que ofrece cierta abstracción para buscar cualquiera de los recursos de "wild" en un archivo llamado "wildthingss.ex".
+
+Este último contendrá una lista con todos los osos y valores para los atributos que se definen en el módulo "Bear".
+
+```elixir
+defmodule Servy.Bear do
+  defstruct id: nil, name: "", type: "", hibernating:false
+end
+```
+
+```elixir
+defmodule Servy.Wildthings do
+  alias Servy.Bear
+
+  def list_bears do
+    [
+      %Bear{id: 1, name: "Teddy", type: "Brown", hibernating: true},
+      %Bear{id: 2, name: "Smokey", type: "Black"},
+      %Bear{id: 3, name: "Paddington", type: "Brown"},
+      %Bear{id: 4, name: "Scarface", type: "Grizzly", hibernating: true},
+      %Bear{id: 5, name: "Snow", type: "Polar"},
+      %Bear{id: 6, name: "Brutus", type: "Grizzly"},
+      %Bear{id: 7, name: "Rosie", type: "Black", hibernating: true},
+      %Bear{id: 8, name: "Roscoe", type: "Panda"},
+      %Bear{id: 9, name: "Iceman", type: "Polar", hibernating: true},
+      %Bear{id: 10, name: "Kenai", type: "Grizzly"}
+    ]
+  end
+end
+```
+
+Ahora hemos de crear instancias de este *struct* en la función *index*. Ahora el campo "resp_body" de la función *index* contendrá código en sintaxis de HTML que veremos cómo procesar a continuación.
+
+```elixir
+defmodule Servy.BearController do
+
+  alias Servy.Wildthings
+
+  def index(conv) do
+    bears = Wildthings.list_bears()
+
+    #TODO: Transform bears to an HTML list
+
+    %{ conv | status: 200, resp_body: "<ul><li>Nam</li></ul>"" }
+  end
+
+  def show(conv, %{"id" => id}) do
+    %{ conv | status: 200, resp_body: "Bear #{id}" }
+  end
+
+  def create(conv, %{"name" => name, "type" => type} = params) do
+    %{ conv | status: 201,
+              resp_body: "Created a #{"type"} bear named #{name}!"}
+  end
+end
+```
+
+Por el momento tenemos una lista de *strings* que queremos convertir en una lista de objetos HTML. Este trabajo será realizado mediante la función *map* del módulo *Enum* que mencionamos anteriormente. Esta función transforma la lista de entrada que recibe como parámetro en una lista a la que le aplica una función que constituye el segundo parámetro recibido, por ejemplo: "fn(x) -> x*2 end".
+Esta función, debido a su uso y sintaxis es **"anónima"**; y es aplicada a cada uno de los elementos de la lista recibida como parámetros. En Elixir, podemos enlazar estas funciones a variables, por ejemplo:
+
+```elixir
+triple = fn x -> x * 3 end
+```
+
+Si ahora ejecutásemos "triple.(10)", obtendríamos el valor 30 como salida. Es de gran importancia recordar que el punto que separa la función del parámetro es vital para invocar funciones anónimas, las diferencia de las funciones con nombre.
+
+## "Slicing" y "Dicing" con Enum (2)
+
+Queremos responder a la petición con cada nombre y tipo de "bear" en una lista HTML. Vamos a incorporar una pipeline en la función *index*:
+
+```elixir
+def index(conv) do
+  items =
+    Wildthings.list_bears()
+    |> Enum.map(fn b -> "<li>#{b.name} - #{b.type}</li>" end)
+    |> Enum.join()
+
+  %{conv | status: 200, resp_body: "<ul>#{items}</ul>"}
+end
+```
+
+Si por ejemplo quisiésemos obtener todos los osos Grizzlies, es decir, que el valor del campo "type" fuese "Grizzly" debemos de incorporar una línea más al pipeline con la función *filter* de *Enum*:
+
+```elixir
+def index(conv) do
+  items =
+    Wildthings.list_bears()
+    |> Enum.filter(fn b -> b.type == "Grizzly" end)
+    |> Enum.map(fn b -> "<li>#{b.name} - #{b.type}</li>" end)
+    |> Enum.join()
+
+  %{conv | status: 200, resp_body: "<ul>#{items}</ul>"}
+end
+```
+
+Podemos también, por ejemplo, ordenar los resultados en orden alfabético de la siguiente manera:
+
+```elixir
+def index(conv) do
+  items =
+    Wildthings.list_bears()
+    |> Enum.filter(fn(b) -> b.type == "Grizzly" end)
+    |> Enum.sort(fnb(b1,b2) -> b1.name <= b2.name end)
+    |> Enum.map(fn(b) -> "<li>#{b.name} - #{b.type}</li>" end)
+    |> Enum.join
+
+    %{ conv | status: 200, resp_body: "<ul>#{items}</ul>" }
+  end
+```
+
+Como podemos comprobar, *Enum* nos ofrece multitud de funciones verdaderamente prácticas a la hora de procesar nuestros datos.
+
+Modifiquemos ahora la función *show* para que esta devuelva el nombre del oso según el id; para lo cual utilizaremos una nueva función llamada "*get_bear*" que se define en "wildthings.ex".
+
+```elixir
+def show(conv, %{"id" => id}) do
+  bear = Wildthings.get_bear(id)
+  %{conv | status: 200, resp_body: "<h1>Bear #{bear.id}: #{bear.name}</h1>"}
+end
+```
+
+```elixir
+defmodule Servy.Wildthings do
+  alias Servy.Bear
+
+  def list_bears do
+    [
+      %Bear{id: 1, name: "Teddy", type: "Brown", hibernating: true},
+      %Bear{id: 2, name: "Smokey", type: "Black"},
+      %Bear{id: 3, name: "Paddington", type: "Brown"},
+      %Bear{id: 4, name: "Scarface", type: "Grizzly", hibernating: true},
+      %Bear{id: 5, name: "Snow", type: "Polar"},
+      %Bear{id: 6, name: "Brutus", type: "Grizzly"},
+      %Bear{id: 7, name: "Rosie", type: "Black", hibernating: true},
+      %Bear{id: 8, name: "Roscoe", type: "Panda"},
+      %Bear{id: 9, name: "Iceman", type: "Polar", hibernating: true},
+      %Bear{id: 10, name: "Kenai", type: "Grizzly"}
+    ]
+  end
+
+  def get_bear(id) when is_integer(id) do
+    Enum.find(list_bears(), fn b -> b.id == id end)
+  end
+end
+```
+
+Es característico en la definición de esta función el uso de la cláusula "when" acompañada de la función "is_integer". Esto se realiza puesto que tan solo queremos que la función se ejecute cuando el id es de tipo *integer*, pues en caso contrario sería inconsistente.
+
+En nuestro caso, todos los id son *strings* puesto que pese a que sufren ciertas transformaciones la URL es un *string* en última instancia. Así pues, en vez de convertir una y otra vez cada uno de estos *string* en *integer*, es bastante más óptimo modificar la función para que esta admita ambos tipos:
+
+```elixir
+defmodule Servy.Wildthings do
+  alias Servy.Bear
+
+  def list_bears do
+    [
+      %Bear{id: 1, name: "Teddy", type: "Brown", hibernating: true},
+      %Bear{id: 2, name: "Smokey", type: "Black"},
+      %Bear{id: 3, name: "Paddington", type: "Brown"},
+      %Bear{id: 4, name: "Scarface", type: "Grizzly", hibernating: true},
+      %Bear{id: 5, name: "Snow", type: "Polar"},
+      %Bear{id: 6, name: "Brutus", type: "Grizzly"},
+      %Bear{id: 7, name: "Rosie", type: "Black", hibernating: true},
+      %Bear{id: 8, name: "Roscoe", type: "Panda"},
+      %Bear{id: 9, name: "Iceman", type: "Polar", hibernating: true},
+      %Bear{id: 10, name: "Kenai", type: "Grizzly"}
+    ]
+  end
+
+  def get_bear(id) when is_integer(id) do
+    Enum.find(list_bears(), fn b -> b.id == id end)
+  end
+
+  def get_bear(id) when is_binary(id) do
+    id |> String.to_integer() |> get_bear
+  end
+end
+```
+
+Aunque durante la escritura del código seamos conscientes de qué se hace en todo momento y en todo lugar, es cierto que algunas funciones no son tan sencillas de comprender a la hora de la lectura. Por lo tanto, vamos a hacer más cómodo y leíble el código del controlador:
+
+```elixir
+defmodule Servy.BearController do
+
+  alias Servy.Wildthings
+  alias Servy.Bear
+
+  defp bear_item(bear) do
+    "<li>#{bear.name} - #{bear.type}</li>"
+  end
+  
+  def index(conv) do
+    items =
+      Wildthings.list_bears()
+      |> Enum.filter(fn(b) -> Bear.is_grizzly(b) end)
+      |> Enum.sort(fnb(b1,b2) -> Bear.order_asc_by_name(b1, b2) end)
+      |> Enum.map(fn(b) -> bear_item(b) end)
+      |> Enum.join
+
+  def create(conv, %{"name" => name, "type" => type} = params) do
+    %{ conv | status: 201,
+              resp_body: "Created a #{"type"} bear named #{name}!"}
+  end
+
+  def show(conv, %{"id" => id}) do
+    bear = Wildthings.get_bear(id)
+    %{ conv | status: 200, resp_body: "<h1>Bear #{bear.id}: #{bear.name}</h1>" }
+  end
+
+end
+```
+
+```elixir
+defmodule Servy.Bear do
+  defstruct id: nil, name: "", type: "", hibernating: false
+
+  def is_grizzly(bear) do
+    bear.type == "Grizzly"
+  end
+
+  def order_Asc_by_name(b1, b2) do
+    b1.name <= b2.name
+  end
+end
+```
+
+Elixir nos ofrece un atajo para utilizar las funciones anónimas. Veamos un ejemplo suponiendo que estamos ejecutando código en una sesión IEx.
+
+phrases = ["lions", "tigers", "bears", "oh my"]
+
+Enum.map(phrases, fn(x) -> String.upcase(x) end)
+
+Enum.map(phrases, &String.upcase(&1))
+
+Como podemos ver, el operador "**&**" sintetiza en gran manera la llamada a la función anónima. Además, el parámetro deja de ser "x" y se convierte en un índice para el cual también utilizamos "&".
+Estas dos funciones mostradas realizan el mismo trabajo.
+
+Apliquemos estas nuevas nociones a nuestro código.
+
+```elixir
+defmodule Servy.BearController do
+
+  alias Servy.Wildthings
+  alias Servy.Bear
+
+  defp bear_item(bear) do
+    "<li>#{bear.name} - #{bear.type}</li>"
+  end
+  
+  def index(conv) do
+    items =
+      Wildthings.list_bears()
+      |> Enum.filter(&Bear.is_grizzly(&1))
+      |> Enum.sort(&Bear.order_asc_by_name(&1,&2))
+      |> Enum.map(&bear_item(&1))
+      |> Enum.join
+
+  def create(conv, %{"name" => name, "type" => type} = params) do
+    %{ conv | status: 201,
+              resp_body: "Created a #{"type"} bear named #{name}!"}
+  end
+
+  def show(conv, %{"id" => id}) do
+    bear = Wildthings.get_bear(id)
+    %{ conv | status: 200, resp_body: "<h1>Bear #{bear.id}: #{bear.name}</h1>" }
+  end
+
+end
+```
+
+Con intención de compactar aún más el código, podemos usar otra técnica que nos ofrece Elixir. Referente a los parámetros que realiza cada una de las funciones y que hemos enumerado mediante "&1...", podemos acortar más aún si acompañamos la llamada a la función de la propia aridad de la misma:
+
+```elixir
+defmodule Servy.BearController do
+
+  alias Servy.Wildthings
+  alias Servy.Bear
+
+  defp bear_item(bear) do
+    "<li>#{bear.name} - #{bear.type}</li>"
+  end
+  
+  def index(conv) do
+    items =
+      Wildthings.list_bears()
+      |> Enum.filter(&Bear.is_grizzly/1)
+      |> Enum.sort(&Bear.order_asc_by_name/2)
+      |> Enum.map(&bear_item/1)
+      |> Enum.join
+
+  def create(conv, %{"name" => name, "type" => type} = params) do
+    %{ conv | status: 201,
+              resp_body: "Created a #{"type"} bear named #{name}!"}
+  end
+
+  def show(conv, %{"id" => id}) do
+    bear = Wildthings.get_bear(id)
+    %{ conv | status: 200, resp_body: "<h1>Bear #{bear.id}: #{bear.name}</h1>" }
+  end
+
+end
+```
+
+Recuerda siempre, "código claro es mejor que código inteligente".

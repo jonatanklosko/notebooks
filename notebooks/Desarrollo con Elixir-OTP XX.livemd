@@ -1,0 +1,126 @@
+# Desarrollo con Elixir/OTP XX
+
+## Procesos Concurrentes y Aislados (I)
+
+Ahora mismo nuestro servidor es perfectamente capaz de procesar peticiones cuando llegan de manera individual enviando la respuesta correspondiente. Pero en el caso en el que más de una petición llegue, este no es capaz de procesarlas todas a la vez sino que ha de ir poco a poco suponiendo un largo tiempo de ejecución. A este suceso se le conoce como **cuello de botella**.
+
+Procedamos a agregar una nueva cláusula para la función *route* en "handle.ex" para hacer una prueba con una petición diferente:
+
+```elixir
+# ...
+
+def route(%Conv{method: "GET", path: "/hibernate/" <> time} = conv) do
+  time |> String.to_integer() |> :timer.sleep()
+
+  %{conv | status: 200, resp_body: "Awake!"}
+end
+
+# ...
+```
+
+":timer:" proviene de un módulo de Erlang, el cual posée una función llamnada ***sleep*** que toma como parámetros el número de milisegundos que se requiere que la función esté inactiva. En este caso, alojamos el valor de la variable "time" en esa función.
+
+Necesitamos modificar el servidor para que pueda manejar la llegada de múltiples peticiones concurrentemente para que estas no se retrasen. Vamos a agregar otra cláusula para la función *route* para abordar el caso en el que se lance una excepción al tratar de manejar una petición:
+
+```elixir
+# ...
+
+def route(%Conv{method: "GET", path: "/kaboom"} = conv) do
+  raise "Kaboom!"
+end
+
+# ...
+```
+
+Si una expeción o fallo tiene lugar, todo el servidor se verá afectadoo y eso es un problema de grandes dimensiones.
+
+Nuestra intención es ejecutar la función *serve* como un proceso separado de manera asíncrona. De esa manera, podríamos acceptar nuevas conexiones de clientes al mismo tiempo que se están manejando las peticiones entrantes.
+
+Para realizar esta tarea vamos a usar la función *spawn*, para llamar a la cual hay 2 maneras, con una función con nombre o una función anónima. Veamos en primer lugar la anónima. Lo haremos en una sesión iEX:
+
+```elixir
+spawn(fn -> IO.puts("Howdy!") end)
+```
+
+La ejecución de esta función, además del resultado esperado, nos ofrece un parámetro **PID**. PID es un identificador del proceso que acaba de ejecutarse.
+
+Vamos a repetir el proceso con ciertas modificaciones:
+
+```elixir
+pid = spawn(fn -> :timer.sleep(10000): IO.puts "Howdy!" end)
+```
+
+Ahora podemos consultar si hay algún proceso activo con PID correspondiente al que acabamos de asignar a la variable pid.
+
+```elixir
+Process.alive?(pid)
+```
+
+Ya que sabemos cómo ejecutar funciones en diferentes procesos podemos resolver la tarea que teníamos entre manos, volvemos a "http_server.ex" y hacemos la siguiente modificación en la función "accept_loop":
+
+```elixir
+# ...
+def accept_loop(listen_socket) do
+  IO.puts("⌛️  Waiting to accept a client connection...\n")
+
+  # Suspends (blocks) and waits for a client connection. When a connection
+  # is accepted, `client_socket` is bound to a new client socket.
+  {:ok, client_socket} = :gen_tcp.accept(listen_socket)
+
+  IO.puts("⚡️  Connection accepted!\n")
+
+  # Receives the request and sends a response over the client socket.
+  spawn(fn -> serve(client_socket) end)
+
+  # Loop back to wait and accept the next connection.
+  accept_loop(listen_socket)
+end
+
+# ...
+```
+
+Con estos nuevos conceptos aplicados a nuestro caso concreto, podrían generarse respuestas a peticiones e incluso lanzarse excepciones al mismo tiempo que se responde a una petición de hibernación, puesto que todas estas se están ejecutando en procesos diferentes pero paralelos al que está haciendo mantenerse inactiva a la función.
+
+## Procesos Concurrentes y Aislados (II)
+
+Podemos comprobar cuántos procesos se están ejecutando al mismo tiempo en una sesión IEx ejecutando el siguiente código:
+
+```elixir
+Process.list()
+```
+
+Esta función nos da una lista con una cantidad enorme de PID referentes a todos los procesos que se están ejecutando. Podemos contar el número total de procesos:
+
+```elixir
+Process.list() |> Enum.count()
+```
+
+También podemos comprobar qué están haciendo los procesos usando la siguiente herramienta:
+
+```elixir
+:observer.start()
+```
+
+Tenemos acceso mediante esta función de Erlang a comprobar todos los procesos que se están llevando a cabo en la máquina virtual de Erlang, además de mucha más información de control de gran interés.
+
+Característicamente, los módulos de Elixir vienen nombrados con el prefijo "Elixir" en esta lista de procesos.
+
+Con la función **self()** en IEx podemos saber el PID del proceso que se está ejecutando en el momento.
+
+En el "observador" que acabamos de abrir no solo podemos visualizar información bastante interesante sino que también podemos interactuar con la aplicación que se está ejecutando, como por ejemplo detener de manera repentina un proceso.
+
+Usemos ahora una función con nombre para ejecutar el lanzamiento del servidor
+
+```elixir
+pid = spawn(Servy.HttpServer, :start, [4000])
+```
+
+Es importante conocer que si detenemos el servidor, no necesariamente se detiene la sesión IEx con la que estábamos trabajando.
+
+Hemos visto que una aplicación de Elixir está compuesta por multitud de procesos aislados ejecutándose de manera concurrente. Algunos de los procesos responde automáticamente cuando la aplicación se inicia y continúan ejecutándose durante todo el tiempo en el que la aplicación está funcionando. Sin embargo, también hay procesos que sólo se ejecutan durante cierto tiempo.
+
+Los procesos en Elixir son ligeros y no necesitan mucho tiempo para ser ejecutados. Todos los procesos se ejecutan, como hemos estado viendo y hemos podido comprobar, en una máquina virtual de Erlang, también conocida como **BEAM**. La propia máquina virtual se ejecuta a sí misma en un proceso del sistema que comienza cuando iniciamos una aplicación Elixir. Cuando se inicializa la máquina virtual, también lo hace un hilo programador cuya funciónes ejecutar cada proceso concurrentemente en la CPU. Esto no supone necesariamente que los procesos se ejecuten a la vez, sino que la CPU va otorgando turnos a todos los procesos que se van ejecutando poco a poco; aunque como esto pasa tan rápido parece que los procesos se ejecutan simultáneamente.
+
+Hoy en día, los ordenadores con más de un núcleo de CPU tienen ventaja pues la máquina virtual crea un programador de procesos para cada núcleo de CPU. Esto implica que en cada uno de estos núcleos se están ejecutando procesos, por lo que sí aparecen procesos que se estén ejecutando al mismo tiempo entre núcleos, es decir, procesos que se ejecutan en paralelo.
+
+En la siguiente lección veremos cómo los procesos interactúan entre sí a través de mensajes.

@@ -1,0 +1,136 @@
+# Desarrollo con Elixir/OTP VIII
+
+## Entregar un archivo
+
+En ocasiones podemos estar interesados en entregar un archivo en respuesta a una petición recibida. Para esta lección, en el proyecto llamado *Servy* que veníamos utilizando hemos creado un directorio llamado "pages" con un archivo "about.html" en el.
+
+Estamos interesados en entregar este archivo en respuesta a la petición de "/about". Antes de nada hemos de definir la petición en el fichero "handler.ex" para ser capaz de procesarla:
+
+```elixir
+request = """
+GET /about HTTP/1.1
+Host: example.com
+User-Agent: ExampleBrowser/1.0
+Accept: */*
+
+"""
+```
+
+Y por consecuente, también ha sido necesaria la creación de una cláusula de la función *route* para la ruta "/about":
+
+```elixir
+def route( %method: "GET", path: "/about"} = conv) do
+  %{ conv | status: 200, resp_body: "contents of file" }
+end
+```
+
+En esta ocasión, la coincidencia de patrones con nuestra función se hará con la ruta "/about" y buscamos introducir en la variable "resp_body" el contenido del archivo. Veamos cómo leer un archivo.
+
+```elixir
+h(File.read())
+```
+
+La función de ayuda sobre la función *read* nos informa de que la *read* devuelve "{:ok, binary}" si la lectura se ha ejecutado correctamente y {:error, reason} si no. Este agregado de datos escrito entre corchetes se denomina *tupla* y es un conjunto de valores ordenados. Como bien sabemos, los *strings* en Elixir son binarios, y por tanto la variable "binary" que vemos en la primera tupla corresponde al contenido del archivo, de tipo *string*. Del mismo modo, "reason" ofrece un *string* con la razón del error. La función *h* para *read* directamente nos comunica las diferentes razones por las que puede tener lugar un error, es decir, los posibles valores de "reason".
+
+```elixir
+{:ok, contents] = File.read("pages/about.html")
+```
+
+Si ejecutamos este código en una sesión iex, se realizará la lectura del archivo "bout.html" que creamos anteriormente y se asignará a la variable "contents" el contenido del mismo. En nuestro proyecto, estamos escribiendo el código en "handler.ex", luego hemos de especificar la ruta correcta donde se encuentra el archivo en la función *read*.
+
+Dentro de la función *route* consideraremos tanto el escenario de lectura correcta del fichero como el de error, y los diferenciaremos mediante las palabras reservada "**case**". Gracias a esta palabra, es posible buscar coincidencias entre la salida de la función *read* y múltiples patrones. Para cada uno de los posibles casos, designaremos cuál es tal caso y cómo queremos que actúe la función.
+
+```elixir
+def route(%{method: "GET", path: "/about"} = conv) do
+  case File.read("../../pages/about.html") do
+    {:ok, content} ->
+      %{conv | status: 200, resp_body: content}
+
+    {:error, :enoent} ->
+      %{conv | status: 404, resp_body: "File not found!"}
+
+    {:error, reason} ->
+      %{conv | status: 500, resp_body: "File error: #{reason}"}
+  end
+end
+```
+
+Es muy importante recordar que el orden en el que situemos cada parte del código puede afectar a la correcta ejecución del mismo. La forma más genérica, en la que siempre será posible encontrar la coincidencia de patrón, y que está ahí puesto que ha de existir una acción para el resto de casos que no son "especiales", ha de situarse la última pues si no todas las peticiones la activarían en primer lugar y dejarían de lado aquella con el mismo nombre que sí debería de ejecutarse.
+
+Veamos cómo realizar esta tarea desde la **terminal**.
+
+```elixir
+elixir(lib / servy / handler.ex)
+```
+
+Para que no importe la localización del archivo a la hora de tomarlo, hay que obtener la **ruta absoluta** del mismo. Para ello utilizaremos variables temporales que después optimizaremos utilizando el pipeline.
+
+```elixir
+def route(%{method: "GET", path: "/about"} = conv) do
+  pages_path= Path.expand("../../pages", __DIR__)
+  file = Path.join(pages_path, "about.html")
+
+  case File.read("../../pages/about.html") do
+    {:ok, content} ->
+      %{ conv | status: 200, resp_body: content}
+
+    {:error, :enoent} ->
+      %{ conv | status: 404, resp_body: "File not found!" }
+
+    {:error, reason} ->
+      %{ conv | status: 500, resp_body: "File error: #{reason}" }
+      
+    end
+```
+
+La asingación a la variable "pages_path" del resultado de la función *Path.expand* le atribuye el directorio donde se encuentra el archivo, pero ahora resta acceder al propio archivo. Haremos esto mediante la función *path.join*, asignando el continido del mismo a la variable "file".
+
+Veamos ahora cómo implementar esto usando el tan eficiente pipeline:
+
+```elixir
+def route(%{method: "GET", path: "/about"} = conv) do
+  file = 
+    Path.expand("../../pages", __DIR__)
+    |> Path.join("about.html"))
+
+  case File.read(file) do
+    {:ok, content} ->
+      %{ conv | status: 200, resp_body: content}
+
+    {:error, :enoent} ->
+      %{ conv | status: 404, resp_body: "File not found!" }
+
+    {:error, reason} ->
+      %{ conv | status: 500, resp_body: "File error: #{reason}" }
+      
+    end
+```
+
+Además de utilizar pipeline se ha modificado el parámetro de entrada de la función *read* puesto que ahora directamente tenemos una variable correspondiente al archivo como resultado del pipline.
+
+Otra manera de ejecutar código condicional es el uso de funciones multicláusula. Veamos como implementar el trabajo realizado hasta ahora con esta técnica:
+
+```elixir
+def route(%{method: "GET", path: "/about"} = conv) do
+    Path.expand("../../pages", __DIR__)
+    |> Path.join("about.html"))
+    |> File.read
+    |> handle_file(conv)
+    end
+
+def handle_file({:ok, content}, conv) do
+  %{ conv | status: 404, resp_body: "File not found!" }
+end
+
+def handle_file({:error, enoent}, conv) do
+  %{ conv | status: 404, resp_body: "File not found!" }
+end
+
+def handle_file({:error, reason}, conv) do
+  %{ conv | status: 500, resp_body: "File error: #{reason}" }
+end
+
+
+```
+
+Ahora, tras encontrar el archivo y acceder a el, lo leemos obteniendo una tupla y esta la introducimos en la función *handle_file* que tiene como parémtro la tupla resultante de la función anterior del pipeline y un map de conversación. Además, el resultado de esta última función también será un map de conversación actualizado.

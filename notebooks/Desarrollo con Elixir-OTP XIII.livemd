@@ -1,0 +1,191 @@
+# Desarrollo con Elixir/OTP XIII
+
+## Recursividad
+
+No siempre tendremos todos los parámetros de la petición en el mismo formato. Volvamos a la petición "POST" que definimos anteriormente.
+
+En la petición, un campo de gran importancia es el "Content-Type". El tipo del contenido nos informa acerca de cómo hemos de procesar el cuerpo de la petición. Para comprobar los tipos, hemos de procesar todos los encabezados como hicimos en la lección anterior para obtener una lista de *strings* llamada "header_lines". No obstante, transformar esta lista en un map sería mucho más útil.
+
+En la definición del *struct* "Conv", vamos a incluir "headers" de la siguiente manera:
+
+```elixir
+defmodule Servy.Conv do
+  defstruct method: "",
+            path: "",
+            params: %{},
+            headers: %{},
+            resp_body: "",
+            status: nill
+  end
+end
+```
+
+Ahora hemos de modificar también la función *parse* para que se adapte a nuestras necesidades.
+
+```elixir
+def parse(request) do
+  [top, params_string] = String.split(request, "\n\n")
+
+  [request_line | header_lines] = String.split(top, "|n")
+
+  [method, path, _] = String.split(request_line, " ")
+
+  headers = parse_headers(headers_lines)
+
+  params = parse_params(params_string)
+
+  IO.inspect(header_lines)
+
+  %Conv{
+    method: method,
+    path: path,
+    params: params,
+    headers: headers
+  }
+end
+
+# ...
+```
+
+Hemos agregado una función específicamente preparada para procesar los encabezados de la petición, a la que llamaremos "*parse_headers*". Esta función devolverá un map con los encabezados. Una manera válida de realizar esta tarea es procesar todo el conjunto del *string* que constituye la petición y procesarlo línea a línea convertiendo cada una de ellas en una pareja clave-valor que será incorporada al map resultado de la función.
+El problema está en que en Elixir no existen constructores de bucle que puedan ayudarnos a resolver esto.
+
+Por el contrario, sí que hay una ténica muy práctica que podemos aplicar en casos como este, la **recursividad**. Por si no lo recuerdas, tuvimos un primer contacto con ella en el ejemplo de las listas, las colas y las cabezas...
+
+Definimos un módulo a continuación que realiza el mismo proceso:
+
+```elixir
+defmodule Recurse do
+  def loopy([head | tail]) do
+    IO.puts("Head: #{head} Tail: #{inspect(tail)}")
+    loopy(tail)
+  end
+end
+```
+
+Podemos apreciar que la función *loopy* se llama a sí misma. Esto es, ni más ni menos que recursividad. En ella iremos reduciendo el tamaño del problema hasta llegar a un caso base en el que se concluirá la ejecución de la función.
+
+Probemos a ejecutar el siguiente código:
+
+```elixir
+Recurse.loopy([1, 2, 3, 4, 5])
+```
+
+Al ejecutarla obtenemos la salida esperada pero terminamos obteniendo un error. Esto es así puesto que como ya sabemos, al reducirse el tamaño de la lista cada vez que se ejecuta la función, llegará un momento en el que el tamaño de esta sea 0, es decir, esté vacía. Llegado a ese punto, la función no tiene datos que procesar y por eso ofrece un error.
+
+Por ello, necesitamos una función que termine la función recursiva.
+
+```elixir
+defmodule Recurse do
+  def loopy([head | tail]) do
+    IO.puts("Head: #{head} Tail: #{inspect(tail)}")
+    loopy(tail)
+  end
+
+  def loopy([]), do: IO.puts("Done!")
+end
+```
+
+Ahora bien, podemos aplicar la recursividad al procesado del *string* de la petición. Usaremos, para ello, dos funciones.
+
+```elixir
+def parse_headers([head | tail]) do
+  IO.puts "Head: #{inspect(head)} Tail: #inspect(tail)}"
+  parse_headers(tail)
+end
+
+def parse_headers([]) do: "Done!"
+```
+
+Al ejecutar esta función obtenemos el resultado esperado, además de que gracias a la función de cortocircuito *parse_headers* con parámetro "([])", la ejecución es limpia. Atendamos ahora a qué debemos hacer con cada pareja "cabeza-cola". Respecto a cada "cabeza" queremos convertirla en una pareja clave-valor, algo que ya sabemos hacer.
+
+```elixir
+def parse_headers([head | tail]) do
+  IO.puts("Head: #{inspect(head)} Tail: #inspect(tail)}")
+
+  [key, value] = String.split(head, ": ")
+
+  IO.puts("Key: #{inspect(key)} Value: #inspect(value)}")
+
+  parse_headers(tail)
+end
+```
+
+Perfecto. Ahora necesitamos poner las parejas resultantes un mismo map resultado.
+
+```elixir
+def parse_headers([head | tail], headers) do
+  [key, value] = String.split(head, ": ")
+  headers = Map.put(%{headers}, hey, value)
+  parse_headers(tail, headers)
+end
+
+def parse_headers([], headers), do: headers
+```
+
+Hemos, por consecuente, de modificar la llamada a la función para que esta reciba un map vacío como segundo parámetro.
+
+```elixir
+def parse(request) do
+  [top, params_string] = String.split(request, "\n\n")
+
+  [request_line | header_lines] = String.split(top, "|n")
+
+  [method, path, _] = String.split(request_line, " ")
+
+  headers = parse_headers(headers_lines, %{})
+
+  params = parse_params(params_string)
+
+  IO.inspect(header_lines)
+
+  %Conv{
+    method: method,
+    path: path,
+    params: params,
+    headers: headers
+  }
+end
+
+# ...
+```
+
+Tras recopilar todos los encabezados en el map podemos volver a nuestro problema inicial. Si el campo "Content-Type" presenta el valor "application/-www-form-urlencoded", en este caso, procederíamos a procesarlo según mediante la función *parse_params*. Pero si no, directamente ignoraríamos la petición...
+
+Para esto, utilizaremos coincidencia de patrones en funciones multicláusula.
+
+```elixir
+def parse(request) do
+  [top, params_string] = String.split(request, "\n\n")
+
+  [request_line | header_lines] = String.split(top, "|n")
+
+  [method, path, _] = String.split(request_line, " ")
+
+  headers = parse_headers(headers_lines, %{})
+
+  params = parse_params(headers["Content-Type"],params_string)
+
+  IO.inspect(header_lines)
+
+  %Conv{
+    method: method,
+    path: path,
+    params: params,
+    headers: headers
+  }
+end
+
+# ...
+
+def parse_params("application/-www-form-urlencoded",params_string) do
+  params_string |> String.trim |> URI.decode_query
+end
+
+def parsE_params(_, _) do: %{}
+
+```
+
+Como podemos ver, en caso de que el calor de "Content-Type" coincida con el que en concreto deseamos procesar, la función actuará de una manera determinada; pero en caso contrario ni siquiera será relevante cuál sea el valor determinado de "Content-Type" ni del *string* puesto que nuestra intención con esta función es únicamente procesar cualquier cosa que no nos interese de una manera ciertamente conservadora. De este modo, devolveríamos únicamente un map vacío.
+
+En la siguiente lección comenzaremos a utilizar el módulo **Enum**, que ofrece funciones muy prácticas para manipular listas.

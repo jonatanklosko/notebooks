@@ -1,0 +1,229 @@
+# Desarrollo con Elixir/OTP XI
+
+## Modelando con Structs
+
+Por el momento estamos usando maps que son estructuras de datos genéricas para representar la coversación, pero las conversaciones también tienen ciertas limitaciones. Una de ellas, por ejemplo, es que poseen un número limitado de campos con valores por defecto. Pretendemos organizar el contenido del map que fluye a través del pipeline, para lo cual utilizaremos **structs**.
+
+Los stucts deben de alojarse en un módulo propio y convenientemente también en un fichero propio. Lo crearemos en "servy", dentro de "lib", y lo llamaremos "conv.ex".
+
+```elixir
+defmodule Servy.Conv do
+  defstruct method: "", path: "", response_body: "", status: nil
+end
+```
+
+Podemos apreciar que el nombre del struct es el mismo que el del módulo, por eso se suele decir que el struct vive en el módulo en el que se crea. 
+Utilizaremos la sentencia "**defstruct**" para crear el módulo y la acompañaremos de las diferentes variables que contienen. A ellas podremos asignarles valores por defecto pero que demomento, en su gran mayoría, serán *strings* vacíos.
+
+No es posible definir más de 1 struct por módulo. Veamos como funciona el struct en una sesión IEx:
+
+```elixir
+conv = %Servy.Conv{}
+```
+
+Podemos crear un struct de esta manera con cierta similitud a la creación del map, pero ahora introducimos el nombre del mismo entre el "%" y los corchetes "{}".
+También podemos crearlo y suministrarle valores que sustituyan a los que vienen definidos por defecto:
+
+```elixir
+conv = %Servy.Conv{method: "GET", path: "/bears"}
+```
+
+En los structs es imposible incorporar una clave diferente a las ya existentes en el mismo. El compilador nos alertará de posibles errores en la escritura de los campos del struct.
+
+Para acceder a los diferentes campos del struct podemos actuar de la misma manera que en los maps, mediante la notación de punto:
+
+```elixir
+conv.method
+conv.path
+```
+
+
+
+A diferencia de los maps, en los structs la notación de corchetes para acceder a los datos no es viable, por lo que no soportan el acceso dinámico y el acceso a ellos es ciertamente más limitado.
+
+Actualizar un struct es una tarea que se resuelve de manera similar a la actualización de maps. Por ejemplo, actualizaremos el código de estado a "200":
+
+```elixir
+conv = { conv | status: 200}
+```
+
+También es posible trabajar con coincidencia de patrones en los structs. Tenemos el struct "conv" a la derecha y queremos escribir un patrón que coincida con él a la izquierda. 
+Si por ejemplo el patrón fuese "method: "GET"", estaríamos comprobando que "conv" fuese un struct y que tuviese el valor "GET" para la variable "method".
+
+```elixir
+%Servy.Conv{method: "GET"} = conv
+```
+
+Del mismo modo, también podemos extraer valores del struct:
+
+```elixir
+%Servy.Conv{method: method} = conv
+```
+
+En general, los structs son un tipo especial de maps con un conjunto fijo de claves y valores por defecto.
+
+Mediante la coincidencia de patrones  sobre un struct podemos estar seguros de que siempre vamos a estar trabajando con el tipo de map esperado, no como en el caso de que lo aplicásemos sobre un map cualquiera. Esto le otorga robustez a nuestra aplicación.
+
+Ahora es necesario cambiar el modo de inicialización del map en la función *parse*, pues ahora queremos que sea un struct.
+
+```elixir
+defmodule Servy.Parser do
+  alias Servy.Conv, as: Conv
+
+  def parse(request) do
+    [method, path, _] =
+      request
+      |> String.split("\n")
+      |> List.first()
+      |> String.split(" ")
+
+    %Conv{
+      method: method,
+      path: path
+    }
+  end
+end
+```
+
+Para evitar la necesidad de escribir "Servy.Conv" cada vez que tengamos que acceder al struct podemos asignarle un alias tal y como vemos en la caja de código anterior. Se llamará "Conv".
+
+Si no añadiésemos "as: Conv", el alias sería el nombre de la última palabra de la ruta, es decir, automáticamente sería "Conv".
+
+Uno de los beneficios de modelar nuestra conversación como un struct en comparación a modelarla como un map es que podemos asegurarnos de que todas las funciones del pipeline siempre reciban el tipo de dato esperado.
+
+Hagamos más modificaciones en alguno de nuestros módulos:
+
+```elixir
+defmodule Servy.Plugins do
+
+  alias Servy.Conv
+
+  @doc "Logs 404 requests"
+  def track(%Conv{status: 404, path: path} = conv) do
+    IO.puts "Warning: #{path} is on the loose!"
+    conv
+  end
+
+  def track(%Conv{} = conv), do: conv
+
+  def rewrite_path(%Conv{path: "/wildlife"} = conv) do
+    %{conv | path: "/wildthings" }
+  end
+
+  def rewrite_path(%Conv{} = conv), do: conv
+
+  def log(%Conv{} = conv), do: IO.inspects conv
+```
+
+```elixir
+defmodule Servy.Handler do
+
+  #moduledoc "Handles HTTP requests."
+
+  alias Servy.Conv
+
+  @pages_path Path.expand("../../pages", __DIR__)
+
+  import Servy.Plugins, only: [rewrite_path: 1, log: 1, track: 1]
+  import Servy.Parser, only: [parse: 1]
+
+  def handle(request) do
+    request
+    |> parse
+    |> rewrite_path
+    |> log
+    |> route
+    |> track
+    |> format_response
+  end
+
+  def route(%Conv{ method: "GET", path: "/wildthings"} = conv) do
+    %{ conv | status: 200, resp_body: "Bears, Lions, Tigers" }
+  end
+
+  def route(%Conv{ method: "GET", path: "/bears"} = conv) do
+    %{ conv | status: 200, resp_body: "Teddy, Smokey, Paddington" }
+  end
+
+  def route(%Conv{ method: "GET", path: "/bears/" <> id} = conv) do
+    %{ conv | status: 200, resp_body: "Bear #{id}" }
+  end
+
+  def route(%Conv{ method: "GET", path: "/about"} = conv) do
+      @pages_path
+      |> Path.join("about.html")
+      |> File.read
+      |> handle_file(conv)
+  end
+
+  def route(%Conv{ path: path} = conv) do
+    %{ conv | status: 404, resp_body: "No #{path} here!"}
+  end
+
+  #...
+  #...
+
+  def format_response(%Conv{} = conv) do
+
+    """
+    HTTP/1.1 #{conv.status} #{status_reason(conv.status)}
+    Content-Type: text/html
+    Content-Length: #{String.length(conv.resp_body)}
+
+    #{conv.resp_body}
+    """
+  end
+```
+
+Nótese que hemos de aplicar la nueva sintaxis que permite trabajar con el struct a todas las funciones o cláusulas que lo utilicen.
+
+A pesar de que usualmente el módulo en el que se defina el struct contenga únicamente al propio struct, hay ocasiones en las que se definen funciones que van de la mano con este. Transformaremos el contenido que devuelve la función *format_response* introduciendo en ella el resultado de una función que definiremos en el módulo del struct llamada "full_status".
+
+```elixir
+def format_response(%Conv{} = conv) do
+  """
+  HTTP/1.1 #{Conv.full_status(conv)}
+  Content-Type: text/html
+  Content-Length: #{String.length(conv.resp_body)}
+  
+  #{conv.resp_body}
+  """
+end
+```
+
+Ahora la definimos en "Servy.Conv":
+
+```elixir
+defmodule Servy.Conv do
+  defstruct method: "", path: "", response_body: "", status: nil
+
+  def full_status(conv) do
+    "#{conv.status} #{status_reason(conv.status)}"
+  end
+end
+```
+
+Esta función interpola el estado y la razón y devuelve un *string*. Para que esta función se ejecute correctamente es necesario invocar a la función *status_response*, por lo que hay que moverla también desde "handler.ex" al fichero del struct. Quedando este de la siguiente manera:
+
+```elixir
+defmodule Servy.Conv do
+  defstruct method: "", path: "", response_body: "", status: nil
+
+  def full_status(conv) do
+    "#{conv.status} #{status_reason(conv.status)}"
+  end
+
+  defp status_response(code) do
+    %{
+      200 => "OK",
+      201 => "Created",
+      401 => "Unauthorized",
+      403 => "Forbideden",
+      404 => "Not Found",
+      500 => "Internal Server Error"
+    }[code]
+  end
+end
+```
+
+Así pues hemos definido un módulo para definir un struct y dos funciones relativas al mismo que funciona a la perfección.
