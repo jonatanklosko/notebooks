@@ -1,0 +1,155 @@
+# Desarrollo con Elixir/OTP XII
+
+## Coincidencia de "cabezas y colas"
+
+Conozcamos ahora un nuevo tipo de petición, las POST. Estas peticiones se utilizan para crear nuevos elementos y recursos. Definiremos la nueva petición en "handler.ex" con el siguiente código:
+
+```elixir
+IO.puts(response)
+
+request = """
+POST /bears HTTP/1.1
+Host: example.com
+User-Agent: ExampleBrowser/1.0
+Accept: */*
+Content-Tyoe: application/x-www-form-urlencoded
+Content-Leb¡ngth: 21
+
+name= Baloo&type=Brown
+"""
+```
+
+El cuerpo de la respuesta es la línea 11, es una serie de parejas nombre-valor separados por "&" y nombres separados de los valores por "=".
+
+En primer lugar, vamos a parsear la última línea de la respuesta en un map en el cual las claves concuerdan con los nombres y los valores con los valores de la nueva petición. Este map representará el string que vimos anteriormente en la línea 11.
+
+```elixir
+def route(%Conv{method: "POST", path: "/bears"} = conv) do
+  params = %{"name" => "Baloo", "type" => "Brown"}
+  %{conv | status: 201, resp_body: "Created a #{params["type"]} a bear named #{params["name"]}!"}
+end
+```
+
+Necesitamos implementar este código de una manera más dinámica. Necesitaremos también parsear la última línea (11) de la definición de la petición en "handler.ex". Veamos cómo hacer esto:
+
+```elixir
+def parse(request) do
+  [top, params_string] = String.split(request, "\n\n")
+
+  [method, path, _] =
+    top
+    |> String.split("\n")
+    |> List.first()
+    |> String.split(" ")
+
+  %Conv{
+    method: method,
+    path: path
+  }
+end
+```
+
+Comenzaremos fraccionando las dos partes del *string* que define la petición y utilizaremos coincidencia de patrones para extraer el contenido del *string* que define la petición. Ya hemos procesado la primera línea, pero el resto también deben ser procesadas y tenemos que tener en cuenta que hay 3 partes distintas con las que trabajar.
+
+Las **listas** tienen "cabeza" y "cola", elementos a los que podemos acceder utilizando el operador "**cons**": "**|**". Veamos un ejemplo para la lista "nums".
+
+```elixir
+nums = [1,2,3,4,5}
+[head | tail] = nums
+```
+
+Si ejecutamos "head", obtendremos 1. Del mismo modo si ejecutamos "tail", nuestra salida será [2,3,4,5]. Por la misma regla, una "cola" también tiene "cabeza" y "cola" y ocurriría lo mismo.
+
+Si llevamos esto hasta el final, veremos que la "cola" del elemento final de una lista siempre da lugar a una lista vacía. Si volviésemos a utilizar el operador *cons* sobre una lista vacía, obtendríamos un error.
+
+Ahora pues, queremos obtener todas las líneas de la petición excepto la primera en forma de lista:
+
+```elixir
+def parse(request) do
+  [top, params_string] = String.split(request, "\n\n")
+
+  [request_line | header_lines] = String.split(top, "\n")
+
+  [method, path, _] = String.split(request_line, " ")
+
+  %Conv{
+    method: method,
+    path: path
+  }
+end
+```
+
+De esta manera, tenemos toda la petición dividida en 3 partes. Ahora deseamos parsear "params_String" para obtener el "name" y el "type" de "bear", de manera dinámica.
+
+```elixir
+URI.decode_query("name=Baloo&type=Brow")
+```
+
+Esta función devuelve un map donde las claves y los valores son los mismos que en la *query* y nos ofrecería las siguiente salida:
+
+%{"name" => "Baloo", "type" => "Brown"}
+
+Aunque resulte tentador, no debemos de tratar de convertir las claves del map generado en **átomos** puesto que al ser procedentes del exterior de Elixir, podemos quedarnos sin memoria.
+
+Volvemos a "Servy.parse" con intención de definir una función que decodifique "params_string*.
+
+```elixir
+def parse(request) do
+  [top, params_string] = String.split(request, "\n\n")
+
+  [request_line | header_lines] = String.split(top, "\n")
+
+  [method, path, _] = String.split(request_line, " ")
+
+  params = parse_params(params_string)
+
+  %Conv{
+    method: method,
+    path: path,
+    params: params
+  }
+end
+
+def parse_params(params_string) do
+  params_string |> String.trim() |> URI.decode_query()
+end
+```
+
+Si tratásemos de recompilar ahora obtendríamos un error y nos avisaría el compilador de que la clave ":params" no se ha encontrado en "Servy.Conv", que como podemos recordar, es un *struct*. Así pues, debemos añadir un campo al *struct* "Conv".
+
+```elixir
+defmodule Servy.Conv do
+  defstruct method: "",
+            path: "",
+            params: %{},
+            resp_body: "",
+            status: nil
+
+  def full_status(conv) do
+    "#{conv.status} #{status_Reason(conv.status)}"
+  end
+
+  defp status_response(code) do
+    %{
+      200 => "OK",
+      201 => "Created",
+      401 => "Unauthorized",
+      403 => "Forbidden",
+      404 => "Not Found",
+      500 => "Internal Server Error"
+    }[code]
+  end
+end
+```
+
+Podemos optimizar un poco el código de la función "route" que hemos definido en esta lección.
+
+```elixir
+def route(%Conv{method: "POST", path: "/bears"} = conv) do
+  %{
+    conv
+    | status: 201,
+      resp_body: "Created a #{conv.params["type"]} a bear named #{conv.params["name"]}!"
+  }
+end
+```

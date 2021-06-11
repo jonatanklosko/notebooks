@@ -1,0 +1,329 @@
+# Desarrollo con Elixir/OTP XVII
+
+## Automatización de Tests
+
+En esta lección vamos a ver cómo pueden se pueden crear test automatizados en Elixir.
+
+A priori, cada vez que recompilamos el trabajo realizado hasta ahora podemos ver por pantalla los resultados de las funciones que hemos creado. Esto podemos considerarlo como un test visual.
+
+Cuando creamos nuestro proyecto, mix también generó un directorio llamado "test" que contiene dos archivos: "test_helper.exs" y "servy_test.exs". Los archivos de test contienen script de Elixir tal y como indica la extensión "**.exs**", lo que implica que estos no necesitan ser compilados.
+
+Dentro de estos ficheros, la primera palabra que podemos encontrar desconocida es **use**. **Use** aporta la funcionalidad del test o el comportamiento que se define en el módulo al que está haciendo referencia. En nuestro caso, dentro del fichero "ServyTest", **use** va acompañada de "ExUnit.Case".
+
+En segundo lugar encontramos **doctest**.
+
+Luego podemos observar el cuerpo del test, en el que podemos encontrar una descripción en *string* y un bloque de código, en el cual se define lo que esperamos obtener tras la ejecución del test. Dentro del cuerpo, la función **assert** comprueba que lo escrito a continuación se cumple. Lo contrario a **assert** es **refute**, usado para comprobación negativa.
+
+Para ejecutar el test, debemos de ejecutar lo siguiente:
+
+```elixir
+mix(test test / servy_test.exs)
+```
+
+Procedamos a crear ahora nuestro propio test. Vamos a crear un test para *parse* llamado "*parse_test.exs*".
+
+```elixir
+defmodule ParserTest do
+  use ExUnit.Case
+  doctest Servy.Parser
+
+  alias Servy.Parser
+
+  test "the truth" do
+    assert 1 + 1 == 2
+  end
+end
+```
+
+En primer lugar vamos a escribir tests para las funciones *parse_headers*, las cuales toman una lista de encabezados y los convierte en un map que contiene parejas clave-valor.
+
+```elixir
+defmodule ParserTest do
+  use ExUnit.Case
+  doctest Servy.Parser
+
+  alias Servy.Parser
+
+  test "parses a List of header fields into a map" do
+    header_lines = ["A: 1", "B: 2"]
+
+    headers = Parser.parse_headers(header_lines, %{})
+
+    assert headers == %{"A" => "1", "B" => "2"}
+  end
+end
+```
+
+```elixir
+mix(test test / parser_test.exs)
+```
+
+Como podemos comprobar, la función que crea el map ha de dar como resultado un valor para la variable "headers" que coincida con el esperado en nuestro test. Si esto ocurre, la ejecución del test habrá sido satisfactoria.
+
+Una ventaja entre otras muchas de las que ofrece Elixir es que si obtenemos un test erróneo, nos informará exactamente de dónde se está produciendo el fallo.
+
+En vez de escribir los test en archivos separados también podemos utilizar los ya mencionados **doctests**. Ahora vamos a crear tests para las funciones *parse_params*.
+
+Cuando escribimos documentación en Elixir, utilizamos Markdown, lo cual implica por ejemplo el uso de "**##**" para generar un **h2**, el uso de "**`**" para las parejas clave-valor, etc. Dentro de esta documentación se incluye el cuerpo del test.
+
+Cuando en el archivo de test inclímos **doctest** busca en el fichero correspondiente a la ruta indicada un test documentado y lo genera automáticamente.
+
+Si ejecutamos lo siguiente:
+
+```elixir
+mix(test)
+```
+
+Al no especificar una ruta de test concreta, se ejecutarán todos los test que mix encuentre.
+
+Con todos estos conocimientos vamos a convertir gran parte del código del fichero "handler.ex" en test automáticos. Para lo cual, creamos el fichero "handler_test.exs". A continuación veremos cómo desarrollar esta tarea.
+
+```elixir
+defmodule HandlerTest do
+  use ExUnit.Case
+
+  import Servy.Handler, only: [handle: 1]
+
+  test "GET /wildthings" do
+    request = """
+    GET /wildthings HTTP/1.1\r
+    Host: example.com\r
+    User-Agent: ExampleBrowser/1.0\r
+    Accept: */*\r
+    \r
+    """
+
+    response = handle(request)
+
+    assert response == """
+           HTTP/1.1 200 OK\r
+           Content-Type: text/html\r
+           Content-Length: 20\r
+           \r
+           Bears, Lions, Tigers
+           """
+  end
+
+  test "GET /bears" do
+    request = """
+    GET /bears HTTP/1.1\r
+    Host: example.com\r
+    User-Agent: ExampleBrowser/1.0\r
+    Accept: */*\r
+    \r
+    """
+
+    response = handle(request)
+
+    expected_response = """
+    HTTP/1.1 200 OK\r
+    Content-Type: text/html\r
+    Content-Length: 356\r
+    \r
+    <h1>All The Bears!</h1>
+    
+    <ul>
+      <li>Brutus - Grizzly</li>
+      <li>Iceman - Polar</li>
+      <li>Kenai - Grizzly</li>
+      <li>Paddington - Brown</li>
+      <li>Roscoe - Panda</li>
+      <li>Rosie - Black</li>
+      <li>Scarface - Grizzly</li>
+      <li>Smokey - Black</li>
+      <li>Snow - Polar</li>
+      <li>Teddy - Brown</li>
+    </ul>
+    """
+
+    assert remove_whitespace(response) == remove_whitespace(expected_response)
+  end
+
+  test "GET /bigfoot" do
+    request = """
+    GET /bigfoot HTTP/1.1\r
+    Host: example.com\r
+    User-Agent: ExampleBrowser/1.0\r
+    Accept: */*\r
+    \r
+    """
+
+    response = handle(request)
+
+    assert response == """
+           HTTP/1.1 404 Not Found\r
+           Content-Type: text/html\r
+           Content-Length: 17\r
+           \r
+           No /bigfoot here!
+           """
+  end
+
+  test "GET /bears/1" do
+    request = """
+    GET /bears/1 HTTP/1.1\r
+    Host: example.com\r
+    User-Agent: ExampleBrowser/1.0\r
+    Accept: */*\r
+    \r
+    """
+
+    response = handle(request)
+
+    expected_response = """
+    HTTP/1.1 200 OK\r
+    Content-Type: text/html\r
+    Content-Length: 72\r
+    \r
+    <h1>Show Bear</h1>
+    <p>
+    Is Teddy hibernating? <strong>true</strong>
+    </p>
+    """
+
+    assert remove_whitespace(response) == remove_whitespace(expected_response)
+  end
+
+  test "GET /wildlife" do
+    request = """
+    GET /wildlife HTTP/1.1\r
+    Host: example.com\r
+    User-Agent: ExampleBrowser/1.0\r
+    Accept: */*\r
+    \r
+    """
+
+    response = handle(request)
+
+    assert response == """
+           HTTP/1.1 200 OK\r
+           Content-Type: text/html\r
+           Content-Length: 20\r
+           \r
+           Bears, Lions, Tigers
+           """
+  end
+
+  test "GET /about" do
+    request = """
+    GET /about HTTP/1.1\r
+    Host: example.com\r
+    User-Agent: ExampleBrowser/1.0\r
+    Accept: */*\r
+    \r
+    """
+
+    response = handle(request)
+
+    expected_response = """
+    HTTP/1.1 200 OK\r
+    Content-Type: text/html\r
+    Content-Length: 102\r
+    \r
+    <h1>Clark's Wildthings Refuge</h1>
+    
+    <blockquote>
+    When we contemplate the whole globe...
+    </blockquote>
+    """
+
+    assert remove_whitespace(response) == remove_whitespace(expected_response)
+  end
+
+  test "POST /bears" do
+    request = """
+    POST /bears HTTP/1.1\r
+    Host: example.com\r
+    User-Agent: ExampleBrowser/1.0\r
+    Accept: */*\r
+    Content-Type: application/x-www-form-urlencoded\r
+    Content-Length: 21\r
+    \r
+    name=Baloo&type=Brown
+    """
+
+    response = handle(request)
+
+    assert response == """
+           HTTP/1.1 201 Created\r
+           Content-Type: text/html\r
+           Content-Length: 33\r
+           \r
+           Created a Brown bear named Baloo!
+           """
+  end
+
+  defp remove_whitespace(text) do
+    String.replace(text, ~r{\s}, "")
+  end
+end
+```
+
+En primer lugar, es necesario importar la función *handle* para poder utilizarla en este módulo. Tras ello, tenemos el primer cuerpo de test para "GET /wildthings". Dentro de este cuerpo definimos una petición que pasamos a la función *handle* y **assert** comprueba que la respuesta dada para la petición recibida coincide con la que queremos testear.
+
+HTTP necesita que cada línea del cuerpo termine en acarreo, por lo que hay que añadir "**\r**" pues Elixir no lo hace automáticamente,  a diferencia de "**\n**", que sí lo añade.
+
+Para comprobar que este test funciona correctamente:
+
+```elixir
+mix(test test / handler_test.exs)
+```
+
+Obtendremos un error relacionado con las componentes "\r" y "\n" que contienen las peticiones pero que nuestra función *parse* no espera. Por ello vamos a realizar una pequeña modificación al respecto en *parse* para poder procesar esto y por tanto también en *format_response* pues están relacionadas:
+
+```elixir
+defmodule Servy.Parser do
+  alias Servy.Conv
+  
+  def parse(request) do
+    [top, params_string] = String.split(request,"\r\n\r\n")
+
+    [request_line | header_lines] = String.split(top, "\r\n")
+    #...
+
+  end
+```
+
+```elixir
+defmodule Servy.Handler do
+  # ...
+
+  def format_response(%Conv{} = conv) do
+    """
+    HTTP/1.1 #{Conv.full_Status(conv)}\r
+    Content-Type: text/html\r
+    Content-Length: #{String.length(conv.resp_body)}\r
+    \r
+    #{conv.resp_body}
+    """
+  end
+
+  # ...
+end
+```
+
+Cabe destacar el uso de la función *assert* al final del test pues en muchas ocasiones aparecen espacios en blanco indeseados, acompañada de:
+
+assert remove_whitespace(response) == remove_whitspace(expected_response)
+
+Normalmente nuestro proyecto ejecuta dentro del pipeline de "handler.ex" funciones como *log* puesto que normalmente estamos programando en modo **dev** pero cuando mix ejecuta los test esto cambia. Así pues, solo nos interesa ver el output de funciones de comprobación de estado como estas en ciertas ocasiones, es decir, durante el desarrollo. Podemos hacer una modificación para solucionar esto:
+
+```elixir
+def track(%Conv{status: 404, path: path} = conv) do
+  if Mix.env() != :test do
+    IO.puts("Warning: #{path} is on the loose!")
+  end
+
+  conv
+end
+
+def log(%Conv{} = conv) do
+  if Mix.env() == :dev do
+    IO.inspect(conv)
+  end
+
+  conv
+end
+```
+
+Utilizamos "Mix.env" para obtener el estado de la sesión, pues esta función devuelve "dev" (desarrollo), "test" (test) y "prod" (producción). Así pues, solo si estamos en la fase en la que queremos que se ejecuten dichas funciones, estas lo harán.

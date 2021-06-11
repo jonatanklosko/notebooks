@@ -1,0 +1,191 @@
+# Desarrollo con Elixir/OTP XXI
+
+## Enviando y Recibiendo Mensajes
+
+Hemos añadido un archivo llamado "video_cam.ex" a "api" con el siguiente código:
+
+```elixir
+defmodule Servy.VideoCam do
+  @doc """
+  Simulates sending a request to an external API
+  to get a snapshot image from a video camera.
+  """
+  def get_snapshot(camera_name) do
+    # CODE GOES HERE TO SEND A REQUEST TO THE EXTERNAL API
+
+    # Sleep for 1 second to simulate that the API can be slow:
+    :timer.sleep(1000)
+
+    # Example response returned from the API:
+    "#{camera_name}-snapshot.jpg"
+  end
+end
+```
+
+Además, en "handler.ex" incorporamos una ruta para "/snapshots" que nos devuelve 3 snapshots.
+
+```elixir
+# ...
+alias Servy.VideoCam
+
+# ...
+def route(%Conv{method: "GET", path: "/snapshots"} = conv) do
+  snapshot1 = VideoCam.get_snapshot("cam-1")
+  snapshot2 = VideoCam.get_snapshot("cam-2")
+  snapshot3 = VideoCam.get_snapshot("cam-3")
+
+  snapshots = [snapshot1, snapshot2, snapshot3]
+
+  %{conv | status: 200, resp_body: inspect(snapshots)}
+end
+
+# ...
+```
+
+A partir de 3 nombres de snapshots construímos una lista que compondrá el cuerpo de la respuesta. No podemos olvidar la necesidad de incluir el "alias Servy.VideoCam" para poder hacer uso de la función *get_snapshot* del módulo *VideoCam*.
+
+Podemos invocar cada una de las peticiones API en su propio proceso para que todas ellas se ejecuten en paralelo; por lo cual en Elixir, procesos pueden invocar otros procesos y el tiempo de procesado de la petición será el más lento de los procesos API independientes.
+
+Ya hemos aprendido cómo invocar las peticiones API en sus respectivos procesos. Apliquemos esto a la función *route* que acabamos de definir:
+
+```elixir
+# ...
+alias Servy.VideoCam
+
+# ...
+def route(%Conv{method: "GET", path: "/snapshots"} = conv) do
+  pid1 = spawn(fn -> VideoCam.get_snapshot("cam-1") end)
+  snapshot2 = VideoCam.get_snapshot("cam-2")
+  snapshot3 = VideoCam.get_snapshot("cam-3")
+
+  snapshots = [snapshot1, snapshot2, snapshot3]
+
+  %{conv | status: 200, resp_body: inspect(snapshots)}
+end
+
+# ...
+```
+
+Cuando ejecutamos la función *spawn*, el resultado de esta es el PID del proceso que se ejecuta, como vimos en la lección anterior. Sin embargo necesitamos crear una lista que contenga los nombres de las snapshots.
+
+Entre procesos es posible enviar mensajes. Hemos de realizar cierta abstracción para entender el funcionamiento de dicha comunicación. Cada proceso posee un "buzón" capaz de recibir mensajes, que vendrá identificado por el PID del proceso en cuestión. Si entendemos "/snapshots" como proceso padre y las peticiones API como procesos hijo, podemos enviar mensajes desde el buzón de hijo hasta el padre, de la siguiente manera:
+
+```elixir
+send(parent_pid, {:result, "cam-1-snapshot.jpg"})
+```
+
+Esta acción situaría el mensaje "cam-1-snapshot.jpg" en el buzón del proceso padre "/snapshots".
+
+Cuando un proceso está listo para recibir un mensaje, ejecuta un bloque de código en el que se utiliza la coincidencia de patrones:
+
+```elixir
+snapshot =
+  receive do
+    {:result, filename} -> filename
+  end
+```
+
+La función *recieve* devuelve el valor de la última expresión coincidente.
+
+Deberíamos de realizar esto para todos los procesos hijos independientes para que se vayan obteniendo los nombres de los archivos en el proceso padre.
+Con la función ***self()*** podemos conseguir el PID del proceso *padre*. Podemos acceder al buzón de un proceso de la manera que vamos a ver en una sesión IEx:
+
+```elixir
+Process.info(PID, :messages)
+```
+
+Atendamos a cómo programar la recepción de los mensajes:
+
+```elixir
+receive do
+  {:result, filename} -> filename
+end
+```
+
+Si tras recibir datos del buzón volvemos a ejecutar la función *info* esta nos ofrecería un resultado vacío pues los mensajes se eliminan una vez han sido recibidos.
+
+Si llamásemos a *recieve* antes de que llegue el propio mensaje no se recepcionará hasta que este llegue. *Recieve* es una llamada de bloque que espera hasta que llegue un mensaje para poder captarlo.
+
+En caso de que haya más de un mensaje en el buzón de proceso, estos se ordenarán por orden de llegada. Del mismo modo, estos son recibidos mediante *recieve* en el mismo orden en el que han llegado al buzon.
+
+Usualmente es fácil cometer un error cuando estamos inicializando procesos. Hemos de recordar que *self* devuelve el PID del proceso actual, por lo que cuando la llamamos, por ejemplo, dentro de la función *spawn*, devuelve el PID del propio proceso de inicialización. *Self* cambiará, por lo que hemos de guardar en variables aquellos que sean necesarios antes de que sean modificados.
+
+```elixir
+# ...
+alias Servy.VideoCam
+
+# ...
+def route(%Conv{method: "GET", path: "/snapshots"} = conv) do
+  # the request-handling process
+  parent = self()
+
+  spawn(fn -> send(parent, {:result, VideoCam.get_snapshot("cam-1")}) end)
+
+  snapshot1 =
+    recieve do
+      {:result, filename} -> filename
+    end
+
+  spawn(fn -> send(parent, {:result, VideoCam.get_snapshot("cam-2")}) end)
+
+  snapshot2 =
+    recieve do
+      {:result, filename} -> filename
+    end
+
+  spawn(fn -> send(parent, {:result, VideoCam.get_snapshot("cam-3")}) end)
+
+  snapshot3 =
+    recieve do
+      {:result, filename} -> filename
+    end
+
+  snapshots = [snapshot1, snapshot2, snapshot3]
+
+  %{conv | status: 200, resp_body: inspect(snapshots)}
+end
+
+# ...
+```
+
+Queremos enviar un mensaje de vuelta al proceso padre. La ejecución de este código lógicamente supondrá ciertos segundos puesto que se espera a que el mensaje llegue para realizar la recepción. Esto podríamos solucionarlo si primero se realiza la invocación de todos los procesos y por lo tanto el envío de todos los mensajes para después recibirlos de manera simultánea.
+
+```elixir
+# ...
+alias Servy.VideoCam
+
+# ...
+def route(%Conv{method: "GET", path: "/snapshots"} = conv) do
+  # the request-handling process
+  parent = self()
+
+  spawn(fn -> send(parent, {:result, VideoCam.get_snapshot("cam-1")}) end)
+  spawn(fn -> send(parent, {:result, VideoCam.get_snapshot("cam-2")}) end)
+  spawn(fn -> send(parent, {:result, VideoCam.get_snapshot("cam-3")}) end)
+
+  snapshot1 =
+    recieve do
+      {:result, filename} -> filename
+    end
+
+  snapshot2 =
+    recieve do
+      {:result, filename} -> filename
+    end
+
+  snapshot3 =
+    recieve do
+      {:result, filename} -> filename
+    end
+
+  snapshots = [snapshot1, snapshot2, snapshot3]
+
+  %{conv | status: 200, resp_body: inspect(snapshots)}
+end
+
+# ...
+```
+
+De esta manera, conseguiremos que todos los procesos se ejecuten concurrentemente y por lo tanto tan sólo será necesario esperar el tiempo de la petición API más lenta, que en nuestro caso es 1 segundo.
+
+Para coordinar tareas asíncronas todo lo que tenemos que hacer es: *spawn* -> *send* -> *recieve*

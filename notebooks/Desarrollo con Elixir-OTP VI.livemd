@@ -1,0 +1,149 @@
+# Desarrollo con Elixir/OTP VI
+
+## Coincidencia de patrones avanzada
+
+En este notebook veremos ténnicas más avanzadas de coincidencia de patrones puesto que son piezas clave en el diseño de aplicaciones con Elixir.
+
+Volviendo a las funciones *route* que definimos en la lección anterior, ahora queremos devolver una respuesta "404" indicando que el recurso solicitado no se encuentra. Para ello, vamos a definir una función de captura.
+
+```elixir
+def route(conv, method, path) do
+  %{conv | resp_body: "No #{path} here!"}
+end
+```
+
+Ejecutando la función tal y como la tenemos ahí, recibiremos un error que indicar que no se está utilizando el parámetro "method" en el cuerpo de la función. Si queremos mantener el código pero obviar este error, podemos añadir un signo "_" al comienzo de "method":
+
+```elixir
+def route(conv, _method, path) do
+  %{conv | resp_body: "No #{path} here!"}
+end
+```
+
+Elixir irá buscando coincidencias en todas las funciones una por una en el orden en el que estén definidas en el código, desde la primera a la última. Si la función que acabamos de definir se sitúa de manera previa al resto de funciones *route* que ya teníamos definida, como requiere un parámetro más respecto a ellas, siempre se ejecutará independientemente del contenido de la petición, y por tanto no se ejecutará el resto de funciones *route*.
+
+Tan solo deseamos que esta función se ejecute cuando ninguna de las otras se han ejecutado tras existir una coindicencia, así que debemos situarla en la última posición.
+
+```elixir
+def route(conv, "GET", "/wildthings") do
+  %{conv | resp_body: "Bears, Lions, Tigers"}
+end
+
+def route(conv, "GET", "/bears") do
+  %{conv | resp_body: "Teddy, Somkey, Paddington"}
+end
+
+def route(conv, _method, path) do
+  %{conv | resp_body: "No #{path} here!"}
+end
+```
+
+Estas funciones deberán de estar agrupadas. Si por ejemplo situamos la última función *route*, la que incluye el parámetro "method" tras otra función del código, como por ejemplo *format_response* obtendremos una advertencia que nos pedirá situarlas juntas.
+
+Ahora, debemos de modificar el código de estado de la respuesta dada, pues previamente este era "200 OK" y ahora deseamos que sea 404.
+
+Para ello, añadiremos una clave "status" en nuestro map *conv*, que inicializaremos a *nil*.
+Posteriormente, modificaremos el cuerpo de la función *route* que definimos hace unos isntantes añadiendo este nuevo campo.
+
+```elixir
+def route(conv, _method, path) do
+  %{conv | status: 404, resp_body: "No #{path} here!"}
+end
+```
+
+De esta manera, actualizaremos el contenido del map y obtendremos una nueva copia que ya contendrá el valor de estado. Del mismo modo, hemos de configurar las otras dos funciones *route* para que el valor de "status" en ellas sea "200". Quedaría de la siguiente manera:
+
+```elixir
+def route(conv, "GET", "/wildthings") do
+  %{conv | status: 200, resp_body: "Bears, Lions, Tigers"}
+end
+
+def route(conv, "GET", "/bears") do
+  %{conv | status: 200, resp_body: "Teddy, Somkey, Paddington"}
+end
+
+def route(conv, _method, path) do
+  %{conv | status: 404, resp_body: "No #{path} here!"}
+end
+```
+
+Por último, tan solo hemos de interpolar la variable "status" en el cuerpo de la función *format_response*:
+
+```elixir
+def format_response(conv) do
+  """
+  HTTP/1.1 #{conv.status} 
+  Content-Type: text/html
+  Content-Length: #String.length(conv.resp_body)}
+  
+  #{conv.resp_body}
+  """
+end
+```
+
+Cómo sabemos, los códigos de estado no solo poseen un número, sino que también ofrecen una pequeña frase que informa sobre el mismo. Para recoger las diferentes frases vamos a crear un map en los que las parejas clave-valor corresponderán a código-razón. Utilizaremos una función de carácter **privado**, lo que indica que solo pueden ser llamadas en el módulo en el que han sido definidas. La adición de esta característica implica únicamente usar **"defp"** en vez de **"def"**.
+
+```elixir
+defp status_reason(code) do
+  %{
+    200 => "OK",
+    201 => "Created",
+    401 => "Unauthorized",
+    403 => "Forbidden",
+    404 => "Not Found",
+    500 => "Internal Server Error"
+  }[code]
+end
+```
+
+
+
+En este map, las claves son números en vez de átomos, eso implica que debemos de usar la **sintaxis de flechas** para enlazar la clave al valor. Ahora, volvemos a la función *format_response* para interpolar el resultado de la función *status_reason*.
+
+```elixir
+def format_response(conv) do
+  """
+  HTTP/1.1 #{conv.status} #{status_reason(conv.status)}
+  Content-Type: text/html
+  Content-Length: #String.length(conv.resp_body)}
+  
+  #{conv.resp_body}
+  """
+end
+```
+
+Ahora vamos a crear una nueva petición en la que se especialice qué valor dentro de "/bears" queremos obtener. Para ello, cambiamos "/bears" por "bears/1" en el código de la respuesta. Así, podremos obtener los elementos de dicha ruta por su ID, "/bears/1, "bears/2", etc.
+
+```elixir
+request = """
+GET /bears/1 HTTP/1.1
+Host: example.com
+User-Agent: ExampleBrowser/1.0
+Accept: */*
+
+"""
+```
+
+Resulta ahora que, se activará la funció *route* que definimos antes porque no hay ninguna coincidencia con la ruta "/bears/x", siendo "x" cualquier número.
+
+Para resolver esto, necesitamos definir una nueva cláusula de la función *route* con la que puedan encontrarse coincidencias con esta nueva ruta. Hay una manera muy rápida de realizar esta tarea, veámosla:
+
+```elixir
+"/bears/" <> id = "/bears/1"
+```
+
+Queremos concatenar "bears/2" con el número que le siga. En Elixir, los *string* son binarios, y para concatenar elementos binarios usamos los operadores mayor (**>**) y menor (**<**).
+
+Además, asignamos a la variable "id" el valor 1 para que "/bears/" pueda coincidir con "/bears/1". Podemos apreciar que la única diferencia entre ambos *string* es el número 1.
+
+Vamos a definir ahora una nueva cláusula para la función *route*:
+
+```elixir
+def route(conv, "GET", "/bears/" <> id) do
+  %{conv | status: 200, resp_body: "Bear #{id}"}
+end
+```
+
+Esto funciona puesto que la coincidencia de patrones se efectúa cada vez que necesitamos enlazar valores a variables. En este caso, cuando se llama a la función, se van a buscar coincidencias entre el tercer argumento y el patrón.
+
+Como el parámetro es "/bears/1", coincide con el patrón y por tanto asigna a "id" el valor 1.

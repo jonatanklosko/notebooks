@@ -1,0 +1,61 @@
+# Desarrollo con Elixir/OTP I
+
+## Creación de proyecto de Elixir
+
+Para crear un proyecto de Elixir, hemos de invocar a la función **mix.new**, acompañada del nombre 
+que deseamos darle al proyecto. Se generará un directorio para el nuevo proyecto.
+
+```elixir
+mix(new.servy)
+```
+
+Es posible conocer todas las funcionalidades que nos ofrece **mix** utilizando el comando **mix.help**. Entre ellas también podremos encontrar la usada para crear el proyecto.
+Para programar en Elixir, es recomendable abrir el código código en nuestra terminal preferida.
+
+```elixir
+mix.help
+```
+
+Una vez se haya creado el proyecto, encontraremos una serie de directorios. **Config** alberga un fichero **config.exs** en el que podemos encontrar la configuración de la aplicación, **lib** alberca un fichero con el nombre de nuestro proyecto y la extensión **.ex** en el que encontraremos todo nuestro código. Por último podemos encontrar un directorio **test**, donde se alberga el proyecto (**mix.exs**) y sus dependencias.
+
+En general, todos los archivos que contengan código tendrán la terminación **.ex**. El código en Elixir se organiza en módulos, cuyos nombres comienzan por mayúscula y contienen funciones cuyos nombres se escriben en minúscula, comenzando por guión o separando las palabras por guiones en notación **snake_case**. Todas las funciones han de ser definidas en estos módulos. Tanto módulos como funciones se acompañan de la palabra reservada **do**.
+
+```elixir
+defModule Servy do
+  def hello(name) do
+    "Hello,#{name}!"
+  end
+end
+```
+
+Para elegir el elemento que ofrecemos como parámetro de entrada para la función, utilizamos la notación **#{}**. Por último, para ejecutar el código escribimos **"IO.puts Servy.hello("name")"**, donde "Servy" es el nombre de nuestro proyecto, "hello" es la función que pretendemos invocar lo que encotramos entre paréntesis son los parámetros que le ofrecemos a la función.
+
+```elixir
+IO.puts(Servy.hello("Elixir"))
+```
+
+Para ejecutar el código de un determinado fichero, ejecutamos: **elixir lib/servy.ex**
+
+```elixir
+elixir(lib / servy.ex)
+```
+
+Otra manera de ejecutar código Elixir es utilizar la shell interactiva **iex** mediante la cual podremos escribir cualquier expresión y obtener su resultado. También es posible realizar llamadas a módulos. Caracterísitcamente, iex no tiene acceso a Servy.ex, por lo cual para ejecutar tal archivo de esta manera tendremos que llamar a la función **c** y acompañarla de la ruta del archivo.
+
+```elixir
+c("lib/servy.ex")
+```
+
+Para abandonar iex, será necesario pulsar Ctrl+C dos veces o hacerlo solo una vez y elegir la opción de salir entre las que s eofrecen.
+
+La última manera de ejecutar el código en iex es iniciar la sesión con la opción **-S**, de la siguiente manera:
+
+```elixir
+iex -S mix
+```
+
+Si realizamos una modificiación en el código y necesitamos recompilar, podemos llamar a la función **r** sobre el proyecto, que lo recompilará y lo recargará para poder ejecutarlo correctamente.
+
+```elixir
+r(Servy)
+```

@@ -1,0 +1,318 @@
+# Desarrollo con Elixir/OTP XXII
+
+## Tareas Asíncronas
+
+En la última lección enviamos una petición a la API, la cual suponía mucha duplicación. Si mandamos más peticiones este fenómeno se multiplica. En esta lección vamos a crear una abstracción para ordenar y llevar a cabo todas las tareas de una forma más sencilla.
+
+Por el momento, para obtener una snapshots necesitamos invocar la función que envía el resultado al processo padr, esperar y devolver el resultado. Entre todas las invocaciones que realizamos en la función *route* tan solo varía el parámetro de la función *get_snapshot* puesto que vamos tomando las diferentes snapshots. Vamos realizar algunas modificaciones y a colocar estas funciones en un nuevo módulo llamado "*fetcher.ex*", en lib.
+
+```elixir
+defmodule Servy.Fetcher do
+  def async(camera_name) do
+    parent = self()
+    spawn(fn -> send(parent, {:result, ServyVideoCam.get_snapshot(camera_name)}) end)
+  end
+
+  def get_result do
+    recieve do
+      {:result, filename} -> value
+    end
+  end
+end
+```
+
+Utilizando este módulo, quien lo utilice no necesita saber la estructura que han de tener los mensajes.
+
+Hemos de incorporar este módulo en "handler.ex" mediante la adición de un **alias**, tal y cómo venimos viendo durante todo este tiempo. Además, incorporaremos las nuevas funciones a *route* para optimizarla:
+
+```elixir
+defmodule ServylHandler do
+
+  @moduledoc "Handles HTTP requests."
+
+  alias Servy.Conv
+  alias Servy.BearController
+  alias Servy.VideoCam
+  alias Servy.Fetcher
+
+  #...
+
+  def route(%Conv{method: "GET", path: "/snapshots"} = conv) do
+    Fetcher.async("cam-1")
+    Fetcher.async("cam-2")
+    Fetcher.async("cam-3")
+  
+    snapshot1 = Fetcher.get_result()
+    snapshot2 = Fetcher.get_result()
+    snapshot3 = Fetcher.get_result()
+
+    snapshots = [snapshot1, snapshot2, snapshot3]
+  
+    %{conv | status: 200, resp_body: inspect(snapshots)}
+  end
+
+  #...
+```
+
+Tras ejecutar este código en una sesión IEx obtenemos el mismo resultado al de la lección anterior pero con un código mucho más limpio y rápido.
+
+En *fetcher* estamos invocando únicamente a la función *get_snapshot* aunque realmente podríamos invocar cualquier función. Para hacer esto vamos a incluir como parámetro el nombre de la función que queremos invocar, dentro de la función *async*.
+
+```elixir
+defmodule Servy.Fetcher do
+  def async(fun) do
+    parent = self()
+    spawn(fn -> send(parent, {:result, fun.()}) end)
+  end
+
+  def get_result do
+    recieve do
+      {:result, value} -> value
+    end
+  end
+end
+```
+
+Actualizamos, por tanto, la función *route*:
+
+```elixir
+defmodule ServylHandler do
+
+  @moduledoc "Handles HTTP requests."
+
+  alias Servy.Conv
+  alias Servy.BearController
+  alias Servy.VideoCam
+  alias Servy.Fetcher
+
+  #...
+
+  def route(%Conv{method: "GET", path: "/snapshots"} = conv) do
+    Fetcher.async(fn -> VideoCam.get_snapshot("cam-1") end)
+    Fetcher.async(fn -> VideoCam.get_snapshot("cam-2") end)
+    Fetcher.async(fn -> VideoCam.get_snapshot("cam-3") end)
+  
+    snapshot1 = Fetcher.get_result()
+    snapshot2 = Fetcher.get_result()
+    snapshot3 = Fetcher.get_result()
+
+    snapshots = [snapshot1, snapshot2, snapshot3]
+  
+    %{conv | status: 200, resp_body: inspect(snapshots)}
+  end
+
+  #...
+```
+
+Supongamos ahora que queremos enviar una petición a otra API. Vamos a crar un nuevo archivo llamado "tracker.ex" en el que incluiremos el código que veremos a continuación en el que brevemente explicado podemos ver su cometido:
+
+```elixir
+defmodule Servy.Tracker do
+  @doc """
+  Simulates sending a request to an external API
+  to get the GPS coordinates of a wildthing.
+  """
+  def get_location(wildthing) do
+    # CODE GOES HERE TO SEND A REQUEST TO THE EXTERNAL API
+
+    # Sleep to simulate the API delay:
+    :timer.sleep(500)
+
+    # Example responses returned from the API:
+    locations = %{
+      "roscoe" => %{lat: "44.4280 N", lng: "110.5885 W"},
+      "smokey" => %{lat: "48.7596 N", lng: "113.7870 W"},
+      "brutus" => %{lat: "43.7904 N", lng: "110.6818 W"},
+      "bigfoot" => %{lat: "29.0469 N", lng: "98.8667 W"}
+    }
+
+    Map.get(locations, wildthing)
+  end
+end
+```
+
+Deseamos llamar a la función *get_location* de "tracker.ex" en "handler.ex", cosa que sabemos hacer.
+
+```elixir
+defmodule ServylHandler do
+
+  @moduledoc "Handles HTTP requests."
+
+  alias Servy.Conv
+  alias Servy.BearController
+  alias Servy.VideoCam
+  alias Servy.Fetcher
+
+  #...
+
+  def route(%Conv{method: "GET", path: "/senosrs"} = conv) do
+    Fetcher.async(fn -> VideoCam.get_snapshot("cam-1") end)
+    Fetcher.async(fn -> VideoCam.get_snapshot("cam-2") end)
+    Fetcher.async(fn -> VideoCam.get_snapshot("cam-3") end)
+    Fetcher.async(fn -> Servy.Tracker.get_location("bigfoot") end)
+
+
+    snapshot1 = Fetcher.get_result()
+    snapshot2 = Fetcher.get_result()
+    snapshot3 = Fetcher.get_result()
+    where_is_bigfoot = Fetcher.get_result()
+
+    snapshots = [snapshot1, snapshot2, snapshot3]
+
+    %{conv | status: 200, resp_body: inspect{snapshots, where_is_bigfoot}}
+  end
+
+  #...
+```
+
+Si ejecutamos este código tal cual, obtendremos un resultado algo confuso pues las coordenadas se imprimirán en la lista que debería contener las snapshots y viceversa. Esto sucede puesto que los mensajes recibidos desde el proceso padre tras haber invocado a las funciones  llegan en un orden diferente al esperado. En la función *get_location* se ha introducido un breve periodo de hibernación más corto que el de la función *get_snapshot*, luego el mensaje resultante de esta llega el primero al buzón del proceso. Por lo tanto, "snapshot1" devuelve el resultado de *get_location* en vez del de *get_snapshot^*.
+
+Para solucionar esto debemos identificar cada proceso, cosa que ya sabemos hacer mediante el uso de PIDs.
+
+```elixir
+defmodule ServylHandler do
+
+  @moduledoc "Handles HTTP requests."
+
+  alias Servy.Conv
+  alias Servy.BearController
+  alias Servy.VideoCam
+  alias Servy.Fetcher
+
+  #...
+
+  def route(%Conv{method: "GET", path: "/senosrs"} = conv) do
+    pid1 = Fetcher.async(fn -> VideoCam.get_snapshot("cam-1") end)
+    pid2 = Fetcher.async(fn -> VideoCam.get_snapshot("cam-2") end)
+    pid3 = Fetcher.async(fn -> VideoCam.get_snapshot("cam-3") end)
+    pid4 = Fetcher.async(fn -> Servy.Tracker.get_location("bigfoot") end)
+
+
+    snapshot1 = Fetcher.get_result(pid1)
+    snapshot2 = Fetcher.get_result(pid2)
+    snapshot3 = Fetcher.get_result(pid3)
+    where_is_bigfoot = Fetcher.get_result(pid4)
+
+    snapshots = [snapshot1, snapshot2, snapshot3]
+
+    %{conv | status: 200, resp_body: inspect{snapshots, where_is_bigfoot}}
+  end
+
+  #...
+```
+
+En la función *async* hemos de incluir el PID de los procesos en la invocación de las funciones. El valor del PID devuelto por la función *spawn* corresponderá, como ya sabemos, con el PID del propio proceso de esa función.
+
+```elixir
+defmodule Servy.Fetcher do
+  def async(fun) do
+    parent = self()
+    spawn(fn -> send(parent, {self(), :result, fun.()}) end)
+  end
+
+  def get_result do
+    recieve do
+      {^pid, :result, value} -> value
+    end
+  end
+end
+```
+
+Si ahora volvemos a realizar la petición, obtendremos el resultado esperado habiendo solventado el error con el que nos encontramos anteriormente.
+
+Por ahora, en *route* tenemos 3 líneas correspondientes a la obtención de los diferentes PIDs y 3 líneas dedicadas a la obtención de resultados. Podemos compactar todo esto, como hemos visto en repetidas ocasiones, utilizando pipelines.
+
+```elixir
+defmodule ServylHandler do
+
+  @moduledoc "Handles HTTP requests."
+
+  alias Servy.Conv
+  alias Servy.BearController
+  alias Servy.VideoCam
+  alias Servy.Fetcher
+
+  #...
+
+  def route(%Conv{method: "GET", path: "/senosrs"} = conv) do
+    snapshots =
+      ["cam-1", "cam-2", "cam-3"] 
+      |> Enum.map(&Fetcher.async(fn -> VideoCam.get_snapshot(&1) end),)
+      |> Enum.map(&Fetcher.get_result/1)
+
+
+    pid4 = Fetcher.async(fn -> Servy.Tracker.get_location("bigfoot") end)
+
+    where_is_bigfoot = Fetcher.get_result(pid4)
+
+    snapshots = [snapshot1, snapshot2, snapshot3]
+
+    %{conv | status: 200, resp_body: inspect{snapshots, where_is_bigfoot}}
+  end
+
+  #...
+```
+
+Como podemos observar, vamos otorgando como parámetros cada *string* de la lista creada (la cual contiene los nombres de las diferentes cámaras) a la función *get_snapshots* para que esta vaya obteniendo los PIDs correspondientes e introduciéndolos en la función *get_result* para que esta obtenga el mensaje referente a dichos PIDs.
+
+A pesar de la mejora, volvemos a tener el problema de que el resultado la función *get_location* no se obtiene en el momento que necesitamos. Para resolver esto vamos a cerciorarnos de que se inicialice la función *get_location* en primer lugar:
+
+```elixir
+defmodule ServylHandler do
+
+  @moduledoc "Handles HTTP requests."
+
+  alias Servy.Conv
+  alias Servy.BearController
+  alias Servy.VideoCam
+  alias Servy.Fetcher
+
+  #...
+
+  def route(%Conv{method: "GET", path: "/senosrs"} = conv) do
+    pid4 = Fetcher.async(fn -> Servy.Tracker.get_location("bigfoot") end)
+
+    snapshots =
+      ["cam-1", "cam-2", "cam-3"] 
+      |> Enum.map(&Fetcher.async(fn -> VideoCam.get_snapshot(&1) end),)
+      |> Enum.map(&Fetcher.get_result/1)
+
+
+    where_is_bigfoot = Fetcher.get_result(pid4)
+
+    snapshots = [snapshot1, snapshot2, snapshot3]
+
+    %{conv | status: 200, resp_body: inspect{snapshots, where_is_bigfoot}}
+  end
+
+  #...
+```
+
+Elixir posée un módulo de tareas que contiene muchas funciones de gran ayuda de las cuales dos de ellas hacen exactamente lo mismo que las funciones que hemos definido en nuestro módulo *fetcher*. Así pues, cambiemos *route* para que use el módulo *task*.
+
+```elixir
+  #...
+
+  def route(%Conv{method: "GET", path: "/senosrs"} = conv) do
+    task = Task.async(fn -> Servy.Tracker.get_location("bigfoot") end)
+
+    snapshots =
+      ["cam-1", "cam-2", "cam-3"] 
+      |> Enum.map(&Task.async(fn -> VideoCam.get_snapshot(&1) end),)
+      |> Enum.map(&Task.await/1)
+
+      
+    where_is_bigfoot = Task.await(task)
+
+    snapshots = [snapshot1, snapshot2, snapshot3]
+
+    %{conv | status: 200, resp_body: inspect{snapshots, where_is_bigfoot}}
+  end
+
+  #...
+```
+
+La función *async* de *task* nos devuleve un *struct*, a diferencia de la de *Fletcher* que nos devolvía un PID. Por otro lado, la función *get_result* de *Fetcher* corresponde a *await* en *task*.
+Recordemos también que podemos eliminar el alias de *fetcher*.
+
+Normalmente usaremos el módulo *task* cuando queramos ejecutar una función de manera asíncrona en un proceso de corta duración.

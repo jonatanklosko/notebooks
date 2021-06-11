@@ -1,0 +1,107 @@
+# Desarrollo con Elixir/OTP VII
+
+## Coincidencias de patrones en maps.
+
+Ahora que ya tenemos peticiones fluyendo a través de nuestro *pipeline* podemos añadir funciones especialidas para transformar tanto la petición como la respuesta. Podemos añadir transformaciones que reescriban tan solo las peticiones que consideremos convenientes. Para ello, utilizaremos la coincidencia de patrones aplicada a maps, técnica muy poderosa y usada en Elixir.
+
+Recuperando nuestro proyecto *Servy* y todo lo que hemos implementado durante las lecciones de este curso, comenzaremos añadiendo una nueva petición para "/wildlife". Queremos que sea tratada por la cláusula de la función *route* que contiene como parámetro "/wildthings".
+
+Hemos de cambiar la ruta que nos permite acceder a "/wildlife" antes de que se ejecute la función *route*, luego añadiremos al pipeline una nueva función que definiremos a continuación. El código inicial del módulo sería así:
+
+```elixir
+defmodule Servy.Handler do
+  def handle(request) do
+    request
+    |> parse
+    |> rewrite_path
+    |> log
+    |> route
+    |> format_response
+  end
+
+  def rewrite_path(conv) do
+    %{ conv | path: "/wildthings"}
+  end
+
+  #...
+```
+
+Para que dos maps coincidan no es totalmente necesario que tengan el mismo número de claves, sino que basta con que ambos elementos sean map y al menos tengan un par clave-valor coincidente. No obstante, si el map de la izquierda posee alguna clave que el map de la derecha no posea, obtendremos un error.
+Esto nos interesa en nuestro caso pues realmente solo buscamos encontrar la coincidencia en la ruta, y no en el resto de claves del map.
+
+Si además deseásemos vincular el valor de alguna de las claves del map a ciertas variables mientras comprobamos si dos maps coinciden, podríamos hacerlo de la siguiente forma (en una sesión iex):
+
+```elixir
+%{method: method, path: "/wildlife"} = conv
+method
+```
+
+Method, por tanto, valdría "GET", pues en "conv" la clave "method" tiene el valor "GET".
+
+Apliquemos esto a la función *rewrite_path* que comenzamos a definir antes:
+
+```elixir
+def rewrite_path(%{path: "/wildlife"} = conv) do
+  %{conv | path: "/wildthings"}
+end
+
+# ...
+```
+
+Por el momento, ejecutando el código con esta nueva función obtendríamos un error puesto que se trataría de ejecutar esta función con todas las peticiones y debido a que hemos condicionado la activación de esta, no funcionaría correctamente excepto con aquella cuyo valor de "path" sea "/wildlife". Por ello, necesitamos una cláusula de la función para el resto de peticiones cuyo valor de "path" difiera de "/wildlife". Como aprendimos anteirormente, el orden de las cláusulas es vital, por lo que definiremos estas detrás de la función principal.
+
+```elixir
+def rewrite_path(conv), do: conv
+```
+
+De este modo, siempre y cuando "path" sea "/wildlife" se ejecutará la función anterior y se modificará el valor de "path"; pero en el resto de casos se pasará por la cláusula que hemos definido que devolverá el map sin modificar.
+
+Probemos ahora a definir una función gracias a la cual cada vez que se obtenga un código de estado igual a 404, nos indique la ruta y localicemos el fallo. Aplicaremos los conocimientos que acabamos de adquirir. Será por tanto necesario modificar de nuevo la estructura del pipeline y definir una nueva función. Veamos cómo queda el código:
+
+```elixir
+defmodule Servy.Handler do
+  def handle(request) do
+    request
+    |> parse
+    |> rewrite_path
+    |> log
+    |> route
+    |> track
+    |> format_response
+  end
+
+  def track(%{ status: 404, path: path} = conv) do
+    IO.puts "Warning: #{path} is on the loose!"
+    conv
+  end
+
+  def track(conv), do: conv
+
+  #...
+```
+
+Hemos de recordar que necesitamos devolver el map "conv" para que pueda continuar el flujo a través del pipeline. También debemos de definir una función que concuerde con el las peticiones que no coincidan con el parámetro de la función *track*.
+
+Conociendo cómo detectar coincidencia de patrones en maps, podemos redefinir las funciones *route* que ya teníamos de una manera más eficiente.
+
+```elixir
+def route(%{ method: "GET", path: "/wildthings" } conv) do
+  %{ conv | status: 200, resp_body: "Bears, Lions, Tigers" }
+end
+
+def route(%{ method: "GET", path: "/bears" } conv) do
+  %{conv | status: 200, resp_body: "Bears, Lions, Tigers" }
+end
+
+def route(%{ method: "GET", path: "/bears" <> id} conv) do
+  %{ conv | status: 200, resp_body: "Bears, Lions, Tigers" }
+end
+
+def route(%{path: "/wildthings" } conv) do
+  %{ conv | status: 200, resp_body: "Bears, Lions, Tigers" }
+end
+```
+
+De esta manera, las cláusulas de la función *route* tan solo tienen como parámetro de entrada el map de conversación "conv" y ofrecen una actualización del mismo, es decir, en resumidas cuentas devuelve otro map de conversación "conv" que permite continuar el flujo funcional del pipeline.
+
+A causa de esta modificación, la cláusula de la función *route* que recibía como parámetro tan sólo el map de conversación.

@@ -1,0 +1,195 @@
+# Desarrollo con Elixir/OTP XIX
+
+## Sockets de Servidor Web
+
+Nuestro módulo *Handler* sabe cómo transformar peticiones en respuestas que el navegador puede mostrar. Así pues, todo lo que tenemos que hacer es recoger todo ese módulo en un *socket* que permita que cualquier cliente HTTP pueda interactuar con nuestro servidor. Podremos desarrollar este trabajo utilizando una librería de **Erlang**.
+
+Actualmente, nosotros ya tenemos un módulo *handler* que procesa y enruta una petición y devuelve una respuesta adecuada. Necesitamos ahora crear algunos *sockets* a través de los cuales los clientes HTTP puedan interconectarse con nuestra apliación por toda la red.
+
+Utilizaremos una librería de *socket* que cuida todos los detalles de bajo nivel. Esta libería ya se encuentra optimizada en Erlang, por lo que Elixir no posee una propia; se llama **gen_tcp**. Esta librería viene preinstalada junto a Elixir. Podemos encontrar toda la documentación refrente a esta librería en la propia web de Erlang.
+
+Elixir es compatible con todas y cada una de las librerías de Erlang aunque estas estén escritas en Erlang pues este compila en código ejecutado en la máquina virtual de Erlang.
+
+Tomaremos como punto de inicio la parte referente al servidor en la comunicación con sockets mediante el uso del protocolo TCP/IP.
+
+En "servy" crearemos un nuevo archivo llamado "http_server.ex" y copiaremos en el el fragmento de código mencionado anteriormente.
+
+```elixir
+server() ->
+  {ok, LSock} = gen_tcp:listen(5678, [binary, {packet, 0},
+                                      {active, false}]),
+  
+  {ok, Sock} = gen_tcp:accept(LSock),
+  {ok, Bin} = do_recv(Sock, []),
+  ok = gen_tecp:close(Sock),
+  Bin.
+```
+
+Este código está escrito usando funciones Erlang, por lo que tenemos que tranducir este código a Elixir. Veamos las diferencias:
+
+```elixir
+def server do
+  {:ok, lsock} = :gen_tcp.listen(5678, [:binary, packet: 0, active: false])
+
+  {:ok, sock} = :gen_tcp.accept(lsock)
+  {:ok, bin} = :gen_tcp.recv(sock, 0)
+  :ok = :gen_tecp.close(sock)
+  bin
+end
+```
+
+Podemos apreciar que se han realizado los siguientes cambios:
+
+-En Erlang, las cadenas de caracteres que comienzan por minúscula son átomos, y como bien sabemos los átomos en Elixir siguen la sintaxis ":" + nombre.
+
+-En Erlang, el nombre de las funciones comienza por mayúscula, a diferencia de en Elixir.
+
+-En Erlang, la llamada a las funciones se realiza, como podemos ver, utilizando ":" tras indicar el nombre de la librería. En Elixir, se escribe ":", se indica el nombre de la librería y la ruta la función viene dada por un ".".
+
+-En Elixir, las "," pueden eliminarse en cada salto de línea.
+
+-El acceso a tuplas en Elixir se puede realizar mediante el nombre de la variable seguida de ":".
+
+-En Elixir, podemos sustituir por 0 los "[]" en los parámetros de entrada de una función para que se tomen todos los valores disponibles.
+
+-En Erlang, el final de la función se denota con un ".", pero en Elixir se usa la palabra reservada "end".
+
+```elixir
+defmodule Servy.HttpServer do
+  def server do
+    {:ok, lsock} = :gen_tcp.listen(5678, [:binary, packet: 0, active: false])
+
+    {:ok, sock} = :gen_tcp.accept(lsock)
+    {:ok, bin} = :gen_tcp.recv(sock, 0)
+    :ok = :gen_tecp.close(sock)
+    bin
+  end
+end
+```
+
+La última modificación y no por ello menos importante es que en Elixir todas las funciones vienen recogidas en módulos. Así pues, esta función *server* será incluída en el módulo "HttpServer" de "Servy".
+
+Si ejecutamos esta función tal cual podemos ver que el servidor no devuelve ninguna respuesta puesto que no están definidas, simplemente. No obstante, en nuestro terminal sí que tenemos pruebas de que se envía la petición y que es recibida por el servidor.
+
+Tomemos una versión ampliada del módulo "Http.Server"
+
+```elixir
+defmodule Servy.HttpServer do
+  @doc """
+  Starts the server on the given `port` of localhost.
+  """
+  def start(port) when is_integer(port) and port > 1023 do
+    # Creates a socket to listen for client connections.
+    # `listen_socket` is bound to the listening socket.
+    {:ok, listen_socket} =
+      :gen_tcp.listen(port, [:binary, packet: :raw, active: false, reuseaddr: true])
+
+    # Socket options (don't worry about these details):
+    # `:binary` - open the socket in "binary" mode and deliver data as binaries
+    # `packet: :raw` - deliver the entire binary without doing any packet handling
+    # `active: false` - receive data when we're ready by calling `:gen_tcp.recv/2`
+    # `reuseaddr: true` - allows reusing the address if the listener crashes
+
+    IO.puts("\n🎧  Listening for connection requests on port #{port}...\n")
+
+    accept_loop(listen_socket)
+  end
+
+  @doc """
+  Accepts client connections on the `listen_socket`.
+  """
+  def accept_loop(listen_socket) do
+    IO.puts("⌛️  Waiting to accept a client connection...\n")
+
+    # Suspends (blocks) and waits for a client connection. When a connection
+    # is accepted, `client_socket` is bound to a new client socket.
+    {:ok, client_socket} = :gen_tcp.accept(listen_socket)
+
+    IO.puts("⚡️  Connection accepted!\n")
+
+    # Receives the request and sends a response over the client socket.
+    serve(client_socket)
+
+    # Loop back to wait and accept the next connection.
+    accept_loop(listen_socket)
+  end
+
+  @doc """
+  Receives the request on the `client_socket` and
+  sends a response back over the same socket.
+  """
+  def serve(client_socket) do
+    client_socket
+    |> read_request
+    |> generate_response
+    |> write_response(client_socket)
+  end
+
+  @doc """
+  Receives a request on the `client_socket`.
+  """
+  def read_request(client_socket) do
+    # all available bytes
+    {:ok, request} = :gen_tcp.recv(client_socket, 0)
+
+    IO.puts("➡️  Received request:\n")
+    IO.puts(request)
+
+    request
+  end
+
+  @doc """
+  Returns a generic HTTP response.
+  """
+  def generate_response(_request) do
+    """
+    HTTP/1.1 200 OK\r
+    Content-Type: text/plain\r
+    Content-Length: 6\r
+    \r
+    Hello!
+    """
+  end
+
+  @doc """
+  Sends the `response` over the `client_socket`.
+  """
+  def write_response(response, client_socket) do
+    :ok = :gen_tcp.send(client_socket, response)
+
+    IO.puts("⬅️  Sent response:\n")
+    IO.puts(response)
+
+    # Closes the client socket, ending the connection.
+    # Does not close the listen socket!
+    :gen_tcp.close(client_socket)
+  end
+end
+```
+
+Comenzamos por una función *start* que inicializa el server en el puerto dado, el cual siempre será superior a 1023 pues los inferiores están dedicados a configuración interna.
+
+Tras ello, encontramos la función *listen_socket* que crea un *socket* para atender a las conecciones del cliente.
+
+La opción ":binary" implica que queremos abrir el *socket* en modo binario y hacer llegar datos de tipo binario. La opción ":raw" implica que queremos que nos llegue todo el contenido de los datos de tipo binario sin ningún tipo de filtro. Además, también encontramos "active: false" que supone que queremos recibir datos cuando estemos listos mediante la llamada a *gen_tcp*. Por último encontramos "reuseaddre: true", mediante lo cual aseguramos que es posible reutilizar la dirección si hay una caída.
+
+En la siguiente función "*accept_loop*", entre otras cosas realizamos una asignación mediante coincidencia de patrones cuando la conexión es aceptada por el servidor, al nuevo *socket* del cliente. Tras ello se invoca la función *serve* que recive la petición del *socket* del cliente y envía una respuesta.
+Esta función se llama de manera recursiva para que se mantega a la espera para la siguiente conexión.
+
+La función *serve* contiene un pipeline de 3 funciones tomando como parámetro el *socket* del cliente: una función de lectura de la petición, una de generación de respuesta y otra que construye la respuesta. Vemos también el simple contenido de estas tres funciones, que hacen uso de funciones cuya identificación es muy intuitiva.
+
+Ahpra vamos a incluir la llamada a "Handler" en el pipeline de *serve*, devolviendo la respuesta que hemos definido en anteriores lecciones:
+
+```elixir
+# ...
+def serve(client_socket) do
+  client_socket
+  |> read_request
+  |> Servy.Handler.Handle
+  |> write_response(client_socket)
+end
+
+# ...
+```
+
+Ahora cualquier cliente HTTP podría acceder a nuestro servidor. Inlcuos, usando el comando "**curl**" podríamos enviar una petición API, por lo que obtendríamos una lista de objetos JSON que ya definimos en la lección anterior.

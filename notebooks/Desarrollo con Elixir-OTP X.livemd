@@ -1,0 +1,108 @@
+# Desarrollo con Elixir/OTP X
+
+## Organizando el código
+
+A pesar de que durante la implementación del código tendemos a agrupar todas las funciones juntas, es bastante más práctico agruparlas según sean similares o no en distintos módulos.
+
+En nuestro pipeline tenemos varias funciones conectadas para tratar ciertas peticiones y respuestas y modificar la conversación de diversas maneras. Ahora, por ejemplo, vamos a colocar las funciones *rewrite_path*, *log* y *track* en un nuevo módulo que llamaremos *Plugins*.
+
+```elixir
+defmodule Servy.Plugins do
+  @doc "Logs 404 requests"
+  def track(%{status: 404, path: path} = conv) do
+    IO.puts("Warning: #{path} is on the loose!")
+    conv
+  end
+
+  def track(conv), do: conv
+
+  def rewrite_path(%{path: "/wildlife"} = conv) do
+    %{conv | path: "/wildthings"}
+  end
+
+  def rewrite_path(conv), do: conv
+
+  def log(conv), do: IO.inspect(conv)
+end
+```
+
+Para llamar a estas funciones en nuestro pipeline será necesario escribir "Servy.Plugins.rewrite_path".
+
+```elixir
+def handle(request) do
+  request
+  |> parse
+  |> Servy.Plugins.rewrite_path()
+  |> Servy.Plugins.log()
+  |> route
+  |> Servy.Plugins.track()
+  |> format_response
+end
+```
+
+Una manera de evitar la necesitad de poner la ruta de cada función cada vez que deseemos usarlas es importar el módulo correspondiente al principio del módulo.
+
+```elixir
+import Servy.Plugins
+
+def handle(request) do
+  request
+  |> parse
+  |> rewrite_path
+  |> log
+  |> route
+  |> track
+  |> format_response
+end
+```
+
+Si queremos importar tan solo ciertas funciones, podemos especificarlo en el **import**:
+
+Los números que escribimos tras los ":" indican el número de parámetros que recibe cada una de las funciones que estamos importando.
+
+```elixir
+import Servy.Plugins, only: [rewrite_path: 1, log: 1, track: 1}]
+```
+
+Parte de nuestro trabajo de organización del código se puede destinar a distribuir todo el código convenientemente en más de un archivo, pues no es necesario que todo esté en el mismo.
+
+Vamos a crear un nuevo archivo en el directorio "servy" contenido en "lib" llamado "plugins.ex". Ahí introduciremos el módulo "Plugins" que acabamos de definir, quitándolo del fichero "handler.ex". Si ahora tratamos de hacer uso de las funciones del mismo obtendremos un error. Para solucionarlo, deberemos ejecutar como aplicación **mix**. Para realizar esta tarea usaremos "iex -S mix".
+
+```elixir
+iex -S mix
+```
+
+Gracias a esto se compilan y cargan todos los módulos del proyecto y se ejecuta el código contenido en ellos.
+
+Para recompilar y recargar el módulo *Servy* podemos utilizar la función de ayuda **r** sobre *Servy.Handler*
+
+Por último, vamos a realizar una tarea similar con la función *parse*. Crearemos un archivo "parser.ex" para introducir en él el código referente a *parse*.
+
+En este archivo definiremos un módulo "Servy.Parser" con la función *parse*.
+
+```elixir
+defmodule Servy.Parser do
+  def parse(request) do
+    [method, path, _} = 
+    request
+  |> String.split("\n")
+  |> List.first
+  |> String.split(" ")
+
+  %{ method: method,
+     path: path,
+     resp_body: "",
+     status: nil
+   }
+ end 
+end
+
+```
+
+Es imprescindible recordar que ahora necesitamos importar este módulo en el fichero "handler.ex".
+
+```elixir
+import Servy.Parse, only: [parse: 1]
+```
+
+Tras ello, es posible recompilar toda la aplicación utilizando la función **recompile**, la cual no toma ningún parámetro pero su sintaxis va acompañada de "()".

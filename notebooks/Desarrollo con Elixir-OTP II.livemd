@@ -1,0 +1,129 @@
+# Desarrollo con Elixir/OTP II
+
+## Transformaciones de alto nivel
+
+En este notebook aprenderemos a gestionar peticiones HTTP.
+
+Tras recuperar nuestro proyecto anterior Servy, hemos de crear un directorio dentro de "lib" con el nombre del proyecto que contendrá el contenido del mismo.
+Podemos crear ahora un archivo que en este caso llamaremos "handler.ex" en el que definiremos nuestro primer módulo. Para nombrar a este módulo utilizaremos el nombre del directorio en el que se encuentra, seguido de un punto y por último del nombre del archivo ex en el que estamos definiendo el método.
+
+```elixir
+defmodule Servy.handler() do
+end
+```
+
+Veamos la petición HTTP que queremos controlar:
+
+```elixir
+request = """
+GET /wildthings HTTP/1.1
+Host: example.com
+User-Agent: ExampleBrowser/1.0
+Accept: */*
+
+"""
+```
+
+Las peticiones HTTP tienen 3 partes:
+
+-La **línea de petición**: contiene el método que queremos llevar a cabo, la ruta sobre la que se quiere realizar la petición y el protocolo HTTP que se está utilizando.
+
+-La segunda parte contiene una lista de parejas **clave-valor**, en la que podemos identificar cuál es el host que realiza la petición y desde qué navegador lo hace.
+
+-Por último, en la tercera parte se hallan los tipos de archivos válidos para la respuesta.
+
+Vemos a continuación, el contenido de la respuesta HTTP:
+
+```elixir
+expected_response = """
+HTTP/1.1 200 OJ
+Content-Type: text/html
+Content-Length: 20
+
+Bears, Lions, Tigers
+"""
+```
+
+La respuesta HTTP también posee 3 partes diferenciadas:
+
+-La **línea de estado**: que incluye la versión HTTP, el código de estado y la "Reason-Phrase" que ofrece una descripción textual del código de estado.
+
+-La segunda parte contiene también una lista de parejas **clave-valor**. Una de ellas informa sobre el tipo de medio del cuerpo y el tamaño del cuerpo.
+
+-Por último, vemos el **cuerpo** de la respuesta enviada.
+
+Ahora bien, veamos cómo poder modificar el contenido de la respuesta.
+
+```elixir
+defmodule Servy.Handler do
+  def handle(request) do
+  end
+end
+
+response = Servy.Handler.handle(request)
+
+IO.puts().response
+```
+
+Definimos una función "handle" que toma como parámetro la petición, cuyo tipo veremos más adelante. De momento, la función no contendrá nada en su cuerpo.
+Fuera del módulo definimos la respuesta a partir de la ejecución de la función que acabamos de denifir y la mostramos con el método ya conocido "IO.puts".
+Veremos a continuación las 3 transformaciones de alto nivel que cada petición HTTP contiene.
+
+```elixir
+def parse(request) do
+  # TODO: Parse the request string into a map:
+  conv = %{method: "GET", path: "/wildthings", resp_body: ""}
+end
+
+def route(conv) do
+  # TODO: Create a new map that also has the response body:
+  conv = %{method: "GET", path: "/wildthings", resp_body: "Bears, Lions, Tigers"}
+end
+
+def format_response(conv) do
+  # TODO: Use values in the map to create an HTTP response string:
+  """
+  HTTP/1.1 200 OK
+  Content-Type: text/html
+  Content-Length: 20
+  
+  Bears, Lions, Tigers
+  """
+end
+```
+
+De momento, la sintaxis del código quedará a un lado pues es más importante ahora conocer la funcionalidad de las funciones **parse**, **route** y **format_response**.
+
+-La función **parse** transforma el string (cadena de caracteres) de la petición en una pareja clave-valor.
+Dentro de ella podemos encontrar código situado entre corchetes **%{}**, correspondiente a un **Map** de Elixir.
+En este map se define una "conversación" entre el cliente y el servidor y las características partes de la misma.
+
+-La función **route** transforma el map creado en un nuevo map que ahora sí contiene información en el cuerpo de la respuesta (""resp_body""). Podemos observar que esta función recibe como parámetros la salida de nuestra función *parse* anterior.
+
+-La función **format_response** recibe la salida de la función *route* y la transforma en un string de formato válido para una respuesta HTTP.
+
+Ahora pues, podemos volver al cuerpo de la función *handle* para ver cómo tratar la respuesta.
+
+```elixir
+def handle(request) do
+  conv = parse(request)
+  conv = route(conv)
+  format_response(conv)
+end
+```
+
+En el cuerpo de la función, creamos la variable cuyo contenido albergará la salida de la función parse que definimos anteriormente y que irá transformándose pasando por las distintas funciones que generan la respuesta.
+En Elixir, hay una manera más eficiente de expresar las transformaciones de elementos, y esta es el uso de **"pipelines"**, que usa operadores "pipe" de Elixir. Veamos la definición de la función *handle* con este método.
+
+```elixir
+def handle(request) do
+  request
+  |> parse
+  |> route
+  |> format_response
+end
+```
+
+Con el *pipeline* somos capaces de enviar el resultado de una función directamente como parámetros a la siguiente función. Es importante conocer que para la siguiente función, el valor recibido toma el lugar del parámetro de la primera posición de entre todos los parámetros que necesite recibir la función.
+
+Para programar de manera funcional, un requisito importante, por abstracto que suene, es aprender a pensar en términos transformaciones de datos.

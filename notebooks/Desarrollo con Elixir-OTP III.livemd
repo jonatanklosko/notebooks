@@ -1,0 +1,118 @@
+# Desarollo con Elixir/OTP III
+
+## Coincidencia de patrones
+
+Para esta notebook, recuperaremos el código de la lección anterior resultante de definir el módulo *Servy.handler*.
+Como vimos en el anterior notebook, debemos de "parsear" la petición y para ello utilizaremos un map.
+En Elixir, los maps comienzan por **%** y el contenido del mismo se encuntra entre corchetes.
+
+Dentro del map, la información se contiene en parejas de clave-valor que varían en función del contenido de la petición.
+Veamos, desde iEX, como parsear el contenido de la petición.
+
+```elixir
+iex
+h(String)
+```
+
+Dentro de iex, la función **h** nos ofrece abundante información que nos puede ser de ayuda pues imprime todas las funciones que pueden ser ejecutadas sobre aquello para lo que requiramos ayuda.
+
+Es característico de Elixir que muchas funciones pueden poseer el mismo nombre pese a tener funcionalidad diferente, esto es así puesto que se diferencian mediante un número que las secuencia y les atribuye un nombre parecido, pero diferente: split/1, split/2, split/3...
+
+En concreto, para nuestro proyecto utilizaremos *split/2*.
+
+```elixir
+h(String.split() / 2)
+```
+
+Podemos ampliar la información que nos ofrece Elixir si agregamos el nombre de la función que queremos consultar a la función *h* anterior. En esta ayuda, usualmente es posible ver qué salida devuelve la función que queremos utilizar.
+*Split/2* devuelve una lista que nosotros recogeremos en una variable llamada *lines*
+
+```elixir
+lines = String.split(request, "\n")
+```
+
+Introducimos el parámetro **"\n"** puesto que la petición posee varias líneas y queremos poder tratarlas individualmente. Para ello, crearemos variables independientes cuyo contenido será el resultado de acceder a las diferentes posiciones de la lista creada mediante el método *split*. Para ello, usamos el nombre de la posición que queremos obtener:
+
+```elixir
+first_line = List.first(lines)
+```
+
+Como vimos anteriormente, esta tarea también puede realizarse utilizando pipelines:
+
+```elixir
+first_line = request |> String.split("\n") |> List.first()
+```
+
+Ahora que ya tenemos construida la primera línea, la dividiremos en 3 partes diferentes: "method", "path" y "resp_body".
+
+```elixir
+parts = String.split(first_line, " ")
+Enum.at(parts, 0)
+```
+
+Con "Enum.at" podremos acceder a los diferentes valores en los que se ha dividido la primera línea mediante el índice de los mismos.
+
+La coincidencia de patrones nos permite realizar todos estos procesos de una manera más eficiente y elegante. Veamos ejemplos a continuación.
+
+```elixir
+a = 1
+```
+
+Como ya sabemos, una **asignación** consiste en otorgar un valor a una variable, en este caso, el valor de *a* es 1. En Elixir, el operador **=** no ofrece una asignación tal y como la conocemos en otros lenguajes de programación, sino que recibe el nombre de **operador de coincidencia** (match operator). De esta manera, si ejecutamos *1 = a* se devuelve 1. Esto es así porque Elixir comprueba que el valor del miembro de la izquierda del operador sea el mismo que el del de la derecha, y en tal caso devuelve el valor. eN *1*a*, ambos valen 1, luego coinciden. Si no fuese así, obtendríamos un **error de coincidencia** (match error).
+
+Si ahora ejecutásemos *a=2*, el valor 2 se otorgaría a la variable. Del mismo modo que antes, ahora pues coindicen en valor y el resultado sería 2.
+
+En alguna ocasión, en vez de dar un nuevo valor a una variable nos interesa realizar una coincidencia de patrones contra el valor ya existente de la variable. Para ello, utilizaremos el operador **pin**, **^**.
+
+```elixir
+^a = 3
+```
+
+Este operador no asigna el valor 3 a la variable a, sino que comprueba que el valor de "a" sea o no 3.
+
+Una de las maneras más poderosas de aprovechar las ventajas de la coincidencia de patrones es desestructurar tipos de datos como por ejemplo listas.
+
+```elixir
+[1, 2, 3] = [1, 2, 3]
+[first, 2, 3] = [1, 2, 3]
+[first, 2, last] = [1, 2, 3]
+[first, last] = [1, 2, 3]
+```
+
+En el primero de los casos, obtendremos [1,2,3] pues las listas coinciden. En el segundo, obtendremos [1,2,3] puesto que, a "first" se le ha otorgado el valor del primer elemento de la lista del miembro de la derecha, que es 1 y que por consecuente coincide.
+En el tercero de los casos sucede lo mismo pero con el tercer elemento.
+
+Sin embargo, si por ejemplo omitimos uno de los elementos de cualquiera de las dos listas que estamos comparando, obtendremos un error pues lógicamente son diferentes.
+
+Volvamos ahora a la petición que queríamos tratar y veamos cómo podemos aplicar los nuevos conceptos al procesamiento de esta.
+
+```elixir
+[method, path, _] = String.split(first_lane, " ")
+```
+
+El guión bajo se utiliza cuando no es relevante el elemento que va en esa posición de la lista, pues este adquiere cualquier valor.
+Ahora, podemos recuperar el código de la función *parse* del módulo *Servy.Handler* para incluir el tratamiento de la petición que acabamos de programar.
+
+Ahora, podremos acceder a las variables que se han definido en la función split llamándolas por su nombre.
+
+```elixir
+def parse(request) do
+  first_line = request |> String.split("\n") |> List.first()
+  [method, path, _] = String.split(first_line, " ")
+  conv = %{method: method, path: path, resp_body: ""}
+end
+```
+
+Por último, veremos la escritura de este código utilizando pipelines:
+
+```elixir
+def parse(request) do
+  [method, path, _] =
+    request
+    |> String.split("\n")
+    |> List.first()
+    |> String.split(" ")
+
+  %{method: method, path: path, resp_body: ""}
+end
+```

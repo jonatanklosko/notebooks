@@ -1,0 +1,70 @@
+# Desarrollo con Elixir/OTP IV
+
+## Datos inmutables
+
+Ahora llega el turno de diseñar el contenido de la respuesta HTTP. Como podemos recordar, la función *parse* devuelve un map con una clave "resp_body" que no tiene asignado ningún valor. Por ello, debemos de editar la función *route* para poder incluir algún valor en este campo.
+
+Anteriormente ya recibieron valores las claves "method" y "path" gracias al tratamiento de la petición HTTP realizado en la función *parse*.
+Para otorgar valores a "resp_body" recurriremos al tratamiento de maps mediante iex.
+
+```elixir
+conv = %{method: "GET", path: "/wildthings", resp_body: "" }}
+```
+
+Las claves del map son **átomos**, un tipo de dato que implementa Elixir y que nos permite acceder al valor de los mismos de la siguiente manera:
+
+```elixir
+conv[:method]
+```
+
+Obteniéndose "GET". De otro modo, si tratásemos de obtener el valor de una clave que no exista, obtendremos **nil**. En el caso de que tratásemos de realizar el acceso al valor mediante la notación "conv.path..." obtendríamos un error claramente expresado.
+Es importante saber que la notación de puntos **sólo funciona si las claves son átomos**.
+
+Cuando queremos otorgarle un valor a "resp_body", es vital recordar que en Elixir todas las estructuras de datos son **inmutables**, y que no podemos tratar de realizar una asignación tal y como haríamos en otros lenguajes pues "=" es un operador de coincidencia.
+En vez de modificar el map, debemos de convertirlo en un nuevo map.
+
+```elixir
+Map.put(conv, resp_body, "Bears")
+```
+
+Gracias a la ayuda que nos ofrece Elixir (h Map), encontramos una función que añade un valor a una de las claves del map que queremos modificar.
+Esta función devuelve un map actualizado con el nuevo valor asociado a la clave correspondiente.
+
+Pese a esto, si volviesemos a llamar al map "conv" nos daríamos cuenta de que el contenido de "resp_body" sigue siendo un *string* vacío, puesto que no se ha actualizado el map al no ser inmutable, sino que se ha generado uno nuevo.
+Por tanto, debemos asignar este nuevo map a una variable para poder obtener el resultado que necesitamos.
+
+```elixir
+conv = Map.put(conv, resp_body, "Bears")
+```
+
+Buscando la optimización del código, podemos realizar esta tarea de una manera más sintetizada:
+
+```elixir
+conv = %{conv | resp_body: "Bears, Lions, Tigers"}
+```
+
+Esta sentencia nos permite tan solo obtener una nueva copia del map en el que se modifican valores que ya existen en el map, como es el caso de que "resp_body" ya posee un valor.
+
+Ahora pues, agregamos el nuevo código a la función *route* que veníamos definiendo anteriormente.
+
+```elixir
+def route(conv) do
+  %{conv | resp_body: "Bears, Lions, Tigers"}
+end
+```
+
+Por último, en la respuesta resta por modificar la función *format_response* en función del contenido del map. Para ello, considerando que estamos en una aplicación que nos permite modificar el código existente y que sabemos acceder a las diferentes parejas clave-valor del map, podemos usar la interpolación de *strings* para introducir en el campo "Content-Lenght" la longitud del valor que deseamos leer.
+
+Así pues, el código correspondiente a la función *format_response* quedaría de la siguiente manera.
+
+```elixir
+def format_response(conv) do
+  """
+  HTTP/1.1 200 OK
+  Content-Type: text/html
+  Contect-Length: #{String.length(conv.resp_body)}
+
+  #{conv.resp_body}
+  """
+end
+```
