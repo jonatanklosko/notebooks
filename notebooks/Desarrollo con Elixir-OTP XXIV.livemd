@@ -1,0 +1,904 @@
+# Desarrollo con Elixir/OTP XXIV
+
+## Refactorización hacia GenServer
+
+GenServer, o proceso de servidor genérico, encapsula el código de estado común en procesos del servidor pudiéndonos centrar en la escritura del código específico de aplicación.
+Retomando nuestro proyecto, podemos convertir el servidor "PledgeServer" a GenServer pero como primer contacto con este tipo de procesos no es lo más adecuado. Así pues, queremos refactorizar nuestro código para adaptarlo al estilo de GenServer.
+
+Comenzaremos por eliminar las duplicaciones en las funciones de la interfaz de cliente. Recordamos que el código del servidor hasta el momento es el siguiente:
+
+```elixir
+defmodule Servy.PledgeServer do
+  @name :pledge_server
+
+  # Client Interface
+
+  def start do
+    IO.puts("Starting the pledge server...")
+    pid = spawn(__MODULE__, :listen_loop, [[]])
+    Process.register(pid, @name)
+    pid
+  end
+
+  def create_pledge(name, amount) do
+    send(@name, {:create_pledge, name, amount})
+
+    recieve do
+      {:response, status} -> status
+    end
+  end
+
+  def recent_pledges do
+    send(@name, {self(), :recent_pledges})
+
+    recieve do
+      {:response, pledges} -> pledges
+    end
+  end
+
+  def total_pledged do
+    send(@name, {self(), :total_pledged})
+
+    recieve do
+      {:response, total} -> total
+    end
+  end
+
+  # Server
+
+  def listen_loop(state) do
+    recieve do
+      {sender, :create_pledge, name, amount} ->
+        {:ok, id} = send_pledge_to_service(name, amount)
+        most_recent_pledges = Enum.take(state, 2)
+        new_state = [{name, amount} | most_recent_pledges]
+        send(sender, {:response, id})
+        listen_loop(new_state)
+
+      {sender, :recent_pledges} ->
+        send(sender, {:response, state})
+        listen_loop(state)
+
+      {sender, :total_pledged} ->
+        total = Enum.map(state, &elem(&1, 1)) |> Enum.sum()
+        send(sender, {:response, total})
+        listen_loop(state)
+
+      unexpected ->
+        IO.puts("Unexpected messaged: #{inspect(unexpected)}")
+        listen_loop(state)
+    end
+  end
+
+
+alias Servy.PledgeServer
+
+pid = spawn(PledgeServer, :listen_loop, [[]])
+IO.inspects(PledgeServer.create_pledge(pid, "larry", 10))
+IO.inspects(PledgeServer.create_pledge(pid, "moe", 20))
+IO.inspects(PledgeServer.create_pledge(pid, "curly", 30))
+IO.inspects(PledgeServer.create_pledge(pid, "daisy", 40))
+IO.inspects(PledgeServer.create_pledge(pid, "grace", 50))
+
+IO.inspect(PledgeServer.recent_pledges(pid))
+```
+
+En primer lugar vamos a diseñar un método de ayuda que encapsule las funciones de envío y recepción. En GenServer, las peticiones síncronas se denominal "calls" (llamadas).
+
+```elixir
+def call(pid, message) do
+  send pid, {self(), message}
+
+  recieve do {:response, status}} -> response end
+end
+```
+
+Esta función tomará un PID y un mensaje. Al PID tomado enviará el mensaje en cuestión. Modifiquemos la interfaz del cliente para adaptarla a esta nueva función.
+
+```elixir
+# ...
+# Client Interface
+
+def start do
+  IO.puts("Starting the pledge server...")
+  pid = spawn(__MODULE__, :listen_loop, [[]])
+  Process.register(pid, @name)
+  pid
+end
+
+def create_pledge(name, amount) do
+  call(@name, {:create_pledge, name, amount})
+end
+
+def recent_pledges do
+  call(@name, :recent_pledges)
+end
+
+def total_pledged do
+  call(@name, :total_pledged)
+end
+
+# ...
+```
+
+Podemos eliminar "self()" de ls tuplas pues ya va contenido en la función *call*. Además, también podemos eliminar las llaves de las tuplas en las que solo restan átomos. Dentro de la función *listen_loop*, la creación de la pledge necesita ir contenida entre llaves tal y como se dicta en la función *create_pledge* pues la tupla contiene varios elementos.
+
+```elixir
+# ...
+
+# Server
+
+def listen_loop(state) do
+  recieve do
+    {sender, {:create_pledge, name, amount}} ->
+      {:ok, id} = send_pledge_to_service(name, amount)
+      most_recent_pledges = Enum.take(state, 2)
+      new_state = [{name, amount} | most_recent_pledges]
+      send(sender, {:response, id})
+      listen_loop(new_state)
+
+    {sender, :recent_pledges} ->
+      send(sender, {:response, state})
+      listen_loop(state)
+
+    {sender, :total_pledged} ->
+      total = Enum.map(state, &elem(&1, 1)) |> Enum.sum()
+      send(sender, {:response, total})
+      listen_loop(state)
+
+    unexpected ->
+      IO.puts("Unexpected messaged: #{inspect(unexpected)}")
+      listen_loop(state)
+  end
+end
+
+# ...
+```
+
+Con estas modificaciones obtenemos los mismos resultados a los que podíamos obtener al final de la lección anterior pero hemos sintetizado nuestro código eliminando algunas duplicaciones.
+
+Ahora. en *listen_loop* queremos seccionar el código genérico del específico de aplicación. Para ello vamos a crear una cláusula genérica para esta función puesto que no todos los mensajes tienen el mismo patrón. Vamos a crear una cláusula que sea capaz de manejar cada tipo de mensaje.
+
+```elixir
+  #...
+  
+  # Server
+
+  def listen_loop(state) do
+    recieve do
+
+      {sender, message} -> 
+        response = handle_call(message, state)
+        send, sender, {:response, response}
+        listen_loop(state)
+
+      unexpected ->
+        IO.puts("Unexpected messaged: #{inspect(unexpected)}")
+        listen_loop(state)
+    end
+  end
+
+  def handle_call(:total_pledged, state) do
+    total = Enum.map(state, &elem(&1, 1)) |> Enum.sum()   
+  end
+
+  def handle_call(:recent_pledges, state) do
+    state
+  end
+
+  def handle_call({:create_pledge, name, amount}, state) do #The whole tuple is the message.
+    {:ok, id} = send_pledge_to_service(name, amount)
+    most_recent_pledges = Enum.take(state, 2)
+    new_state = [{name, amount} | most_recent_pledges]
+    id       
+  end
+
+#...
+```
+
+De esta manera, en la variable "response" se irán alojando los resultado de ejecutar la función más adecuada para cada patrón de mensaje. Para que se ejecute una u otra cláusula se tendrá en cuenta el átomo que hace referencia al contenido del mensaje, pudiendo ser: "total_pledged", "recent_pledges" o "create_pledge".
+
+Si ejecutásemos este código, se crearían correctamente las pledges pero obtendríamos un par de errores: la lista de pledges estaría vacía y el total sería 0, de manera lógicamente errónea. Esto es así puesto que *create_pledge* genera un nuevoi estado cada vez que es ejecutada, pero la cláusula genérica realiza un bucle recursivo utilizando únicamente el primero de los estados que recibe. Hemos de modificarlo de la siguiente manerA:
+
+```elixir
+ #...
+  
+  # Server
+
+  def listen_loop(state) do
+    recieve do
+
+      {sender, message} -> 
+        {response,state} = handle_call(message, state)
+        send, sender, {:response, response}
+        listen_loop(new_state)
+
+      unexpected ->
+        IO.puts("Unexpected messaged: #{inspect(unexpected)}")
+        listen_loop(state)
+    end
+  end
+
+  def handle_call(:total_pledged, state) do
+    total = Enum.map(state, &elem(&1, 1)) |> Enum.sum() 
+    {total,state}  
+  end
+
+  def handle_call(:recent_pledges, state) do
+    {state,state}
+  end
+
+  def handle_call({:create_pledge, name, amount}, state) do #The whole tuple is the message.
+    {:ok, id} = send_pledge_to_service(name, amount)
+    most_recent_pledges = Enum.take(state, 2)
+    new_state = [{name, amount} | most_recent_pledges]
+    {id, new_state}       
+  end
+
+#...
+```
+
+Antes ya teníamos una herramienta que era capaz de procesar aquellos mensajes que no se asemejaban a ninguno de los que teníamos en mente. Esto también ha de hacerse ahora pues la función *handle_call* a la que le llega toda tupla compuesta por un código de estado y un mensaje no es capaz de procesar esas excepciones.
+
+```elixir
+#...
+  
+  # Server
+
+  def listen_loop(state) do
+    recieve do
+
+      {sender, message} when is_pid(sender) -> 
+        {response,state} = handle_call(message, state)
+        send, sender, {:response, response}
+        listen_loop(new_state)
+
+      unexpected ->
+        IO.puts("Unexpected messaged: #{inspect(unexpected)}")
+        listen_loop(state)
+    end
+  end
+
+  def handle_call(:total_pledged, state) do
+    total = Enum.map(state, &elem(&1, 1)) |> Enum.sum() 
+    {total,state}  
+  end
+
+  def handle_call(:recent_pledges, state) do
+    {state,state}
+  end
+
+  def handle_call({:create_pledge, name, amount}, state) do #The whole tuple is the message.
+    {:ok, id} = send_pledge_to_service(name, amount)
+    most_recent_pledges = Enum.take(state, 2)
+    new_state = [{name, amount} | most_recent_pledges]
+    {id, new_state}       
+  end
+
+#...
+```
+
+De esta manera, tan solo se ejecutará la función call sobre las tuplas con PID y mensaje.
+
+Podríamos incluir una función destinada a la limpieza de la caché.
+
+```elixir
+# ...
+
+def clear do
+  send(@name, :clear)
+end
+
+# ...
+```
+
+"Clear" es un mensaje asíncrono que devuelve una respuesta de manera práctricamente inmediata. De la misma manera que hemos creado una función capaz de procesar las diferentes peticiones síncronas (*handle_call*), también podríamos crear una para peticiones de carácter asíncrono como el "clear" que acabamos de ver. En este caso, de manera similar a *call* creada anteriormente, implementaremos *cast*.
+
+```elixir
+# ....
+
+def clear do
+  cast(@name, :clear)
+end
+
+# ...
+
+# Helper Functions
+
+def call(pid, message) do
+  send(pid, {self(), message})
+
+  recieve do
+    {:response, response} -> response
+  end
+end
+
+def cast(pid, message) do
+  send(pid, message)
+end
+
+# ...
+```
+
+También necesitamos manejar el limpiador de la caché desde la interfaz del servidor, devolviendo una lista vacía. En este caso, *handle_Cast* no tiene que enviar una respuesta al cliente pues este no lo espera.
+
+```elixir
+  # Server
+
+  def listen_loop(state) do
+    recieve do
+
+      {sender, message} when is_pid(sender) -> 
+        {response,state} = handle_call(message, state)
+        send, sender, {:response, response}
+        listen_loop(new_state)
+
+
+        message ->
+          new_state = handle_cast(message, state)
+          listen_loop(state)
+
+        :clear ->
+          new_state = []
+          listen_loop(new_state)
+
+      unexpected ->
+        IO.puts("Unexpected messaged: #{inspect(unexpected)}")
+        listen_loop(state)
+    end
+  end
+```
+
+Definamos ahora *handle_cast*, en la cual el estado que deberá de devolver, como ya hemos visto, será una lista vacía. También es necesario que etiquetemos los mensajes según sean "call" o "cast", para lo cual vamops a incluir un nuevo elemento a la tupla del mensaje para que no todas las peticiones ejecuten la función *handle_cast* sin llegar a lanzar una excepción pese a que debiese hacerlo.
+
+```elixir
+#...
+
+
+  # Server
+
+  def listen_loop(state) do
+    recieve do
+
+      {:call,sender, message} when is_pid(sender) -> 
+        {response,state} = handle_call(message, state)
+        send, sender, {:response, response}
+        listen_loop(new_state)
+
+
+       {:cast,message} ->
+          new_state = handle_cast(message, state)
+          listen_loop(state)
+
+        :clear ->
+          new_state = []
+          listen_loop(new_state)
+
+      unexpected ->
+        IO.puts("Unexpected messaged: #{inspect(unexpected)}")
+        listen_loop(state)
+    end
+  end
+
+def handle_cast(:clear, _state) do
+  []
+end
+
+
+#...
+```
+
+No podemos olvidarnos que en la definición de las funciones *cast* y *call* hay que incluir estos nuevos parámetros.
+
+```elixir
+# ...
+
+# Helper Functions
+
+def call(pid, message) do
+  send(pid, {:call, self(), message})
+
+  recieve do
+    {:response, response} -> response
+  end
+end
+
+def cast(pid, message) do
+  send(pid, {:cast, message})
+end
+
+# ...
+```
+
+Hagamos una recuperación de todo el código del servidor:
+
+```elixir
+defmodule Servy.PledgeServer do
+  @name :pledge_server
+
+  # Client Interface
+
+  def start do
+    IO.puts("Starting the pledge server...")
+    pid = spawn(__MODULE__, :listen_loop, [[]])
+    Process.register(pid, @name)
+    pid
+  end
+
+  def create_pledge(name, amount) do
+    call @name, {:create_pledge, name, amount}   
+  end
+
+  def recent_pledges do
+    call @name, :recent_pledges
+  end
+
+  def total_pledged do
+    call @name, :total_pledged  
+  end
+
+  def clear do
+    cast @name, :clear
+  end
+  
+  #Helper Functions
+
+  def call(pid,message) do
+    send pid, {:call, self(), message}
+
+    recieve do {:response, response} -> response end
+  end
+
+  def cast(pid,message) do
+    send pid, {:cast, message}
+  end
+
+
+  # Server
+
+  def listen_loop(state) do
+    recieve do
+
+      {:call,sender, message} when is_pid(sender) -> 
+        {response,state} = handle_call(message, state)
+        send, sender, {:response, response}
+        listen_loop(new_state)
+
+
+       {:cast,message} ->
+          new_state = handle_cast(message, state)
+          listen_loop(state)
+
+        :clear ->
+          new_state = []
+          listen_loop(new_state)
+
+      unexpected ->
+        IO.puts("Unexpected messaged: #{inspect(unexpected)}")
+        listen_loop(state)
+    end
+  end
+
+def handle_cast(:clear, _state) do
+  []
+end
+
+def handle_call(:total_pledged, state) do
+  total = Enum.map(state, &elem(&1, 1)) |> Enum.sum() 
+  {total,state}  
+end
+
+def handle_call(:recent_pledges, state) do
+  {state,state}
+end
+
+def handle_call({:create_pledge, name, amount}, state) do #The whole tuple is the message.
+  {:ok, id} = send_pledge_to_service(name, amount)
+  most_recent_pledges = Enum.take(state, 2)
+  new_state = [{name, amount} | most_recent_pledges]
+  {id, new_state}       
+end
+
+alias Servy.PledgeServer
+
+pid = spawn(PledgeServer, :listen_loop, [[]])
+IO.inspects(PledgeServer.create_pledge(pid, "larry", 10))
+IO.inspects(PledgeServer.create_pledge(pid, "moe", 20))
+IO.inspects(PledgeServer.create_pledge(pid, "curly", 30))
+IO.inspects(PledgeServer.create_pledge(pid, "daisy", 40))
+IO.inspects(PledgeServer.create_pledge(pid, "grace", 50))
+
+IO.inspect(PledgeServer.recent_pledges(pid))
+```
+
+Vamos a incluir las funciones de ayuda en un nuevo módulo llamado "GenericServer":
+
+```elixir
+defmodule Servy.GenericServer do
+  def call(pid, message) do
+    send(pid, {:call, self(), message})
+
+    recieve do
+      {:response, response} -> response
+    end
+  end
+
+  def cast(pid, message) do
+    send(pid, {:cast, message})
+  end
+
+  defmodule Servy.GenericServer do
+    def call(pid, message) do
+      send(pid, {:call, self(), message})
+
+      recieve do
+        {:response, response} -> response
+      end
+    end
+
+    def cast(pid, message) do
+      send(pid, {:cast, message})
+    end
+  end
+end
+```
+
+Es imprescindible incluir el álias referente a este módulo en el módulo "PledgeServer", además de referenciar las funciones pertinentes:
+
+```elixir
+defmodule Servy.PledgeServer do
+
+  alias Servy.GenericServer 
+
+  @name :pledge_server
+
+  # Client Interface
+
+  def start do
+    IO.puts("Starting the pledge server...")
+    pid = spawn(__MODULE__, :listen_loop, [[]])
+    Process.register(pid, @name)
+    pid
+  end
+
+  def create_pledge(name, amount) do
+    GenericServer.call @name, {:create_pledge, name, amount}   
+  end
+
+  def recent_pledges do
+    GenericServer.call @name, :recent_pledges
+  end
+
+  def total_pledged do
+    GenericServer.call @name, :total_pledged  
+  end
+
+  def clear do
+    GenericServer.cast @name, :clear
+  end
+  
+  #Helper Functions
+
+  def call(pid,message) do
+    send pid, {:call, self(), message}
+
+    recieve do {:response, response} -> response end
+  end
+
+  def cast(pid,message) do
+    send pid, {:cast, message}
+  end
+
+
+  # Server
+
+  def listen_loop(state) do
+    recieve do
+
+      {:call,sender, message} when is_pid(sender) -> 
+        {response,state} = handle_call(message, state)
+        send, sender, {:response, response}
+        listen_loop(new_state)
+
+
+       {:cast,message} ->
+          new_state = handle_cast(message, state)
+          listen_loop(state)
+
+        :clear ->
+          new_state = []
+          listen_loop(new_state)
+
+      unexpected ->
+        IO.puts("Unexpected messaged: #{inspect(unexpected)}")
+        listen_loop(state)
+    end
+  end
+
+def handle_cast(:clear, _state) do
+  []
+end
+
+def handle_call(:total_pledged, state) do
+  total = Enum.map(state, &elem(&1, 1)) |> Enum.sum() 
+  {total,state}  
+end
+
+def handle_call(:recent_pledges, state) do
+  {state,state}
+end
+
+def handle_call({:create_pledge, name, amount}, state) do #The whole tuple is the message.
+  {:ok, id} = send_pledge_to_service(name, amount)
+  most_recent_pledges = Enum.take(state, 2)
+  new_state = [{name, amount} | most_recent_pledges]
+  {id, new_state}       
+end
+
+alias Servy.PledgeServer
+
+pid = spawn(PledgeServer, :listen_loop, [[]])
+IO.inspects(PledgeServer.create_pledge(pid, "larry", 10))
+IO.inspects(PledgeServer.create_pledge(pid, "moe", 20))
+IO.inspects(PledgeServer.create_pledge(pid, "curly", 30))
+IO.inspects(PledgeServer.create_pledge(pid, "daisy", 40))
+IO.inspects(PledgeServer.create_pledge(pid, "grace", 50))
+
+IO.inspect(PledgeServer.recent_pledges(pid))
+```
+
+De manera sorprendente, todo el código de la función *listen_loop* es genérico, pues la especificidad se aloja en al función *handle_call* y *handle_cast* y en sus respectivas cláusulas; luego también podemos incluirla en el módulo "GenericServer". Como ahora en el módulo que acabamos de crear se hace uso de funciones que están definidas en el anterior, hay que realizar las llamadas a las mismas.
+
+También podemos mover la función *start*. Para que esta función sea completamente genérica hemos de pasar tanto el nombre del proceso como el estado inicial, que son específicos, como parámetros. Además, podemos actualizar la función en "PledgeServer" llamándola desde el módulo "GenericServer donde está alojado el cuerpo de esta.
+
+```elixir
+defmodule Servy.GenericServer do
+
+  alias Servy.PledgeServer
+
+  def start(inicial_state, name) do
+    pid = spawn(__MODULE__, :listen_loop, [inicial_state])
+    Process.register(pid, name)
+    pid
+  end
+
+  def call(pid,message) do
+    send pid, {:call, self(), message}
+
+    recieve do {:response, response} -> response end
+  end
+
+  def cast(pid,message) do
+   send pid, {:cast, message}
+  end
+
+  def listen_loop(state) do
+    recieve do
+
+      {:call,sender, message} when is_pid(sender) -> 
+        {response,state} = PledgeServer.handle_call(message, state)
+        send, sender, {:response, response}
+        listen_loop(new_state)
+
+
+       {:cast,message} ->
+          new_state = PledgeServer.handle_cast(message, state)
+          listen_loop(state)
+
+        :clear ->
+          new_state = []
+          listen_loop(new_state)
+
+      unexpected ->
+        IO.puts("Unexpected messaged: #{inspect(unexpected)}")
+        listen_loop(state)
+    end
+  end
+
+end
+```
+
+Para hacerlo aún más genérico, vamos a hacer uso de una variable llamnada "callback_module" que irá accediendo a los diferentes módulos en los que se alojen las funciones requeridas según el contenido de los datos que queramos procesar mediante dichas funciones.
+
+Para ello, en la función que inicia el servidor (*start*) es necesario decirle qué módulo implementa las funciones de callback, y pasaremos el "callback_module" como parámetro:
+
+```elixir
+# ...
+def start do
+  IO.puts("Starting the pledge server...")
+  GnericServer.start(__MODULE__, [], @name)
+end
+
+# ...
+```
+
+Lógicamente, en la definición nde la función *start* en su versión genérica hemos de incluir también el *callback_module* como parámetro:
+
+```elixir
+#...
+
+def start(callback_module,inicial_state, name) do
+  pid = spawn(__MODULE__, :listen_loop, [inicial_state, callback_module])
+  Process.register(pid, name)
+  pid
+end
+
+def listen_loop(state,callback_module) do
+  recieve do
+
+    {:call,sender, message} when is_pid(sender) -> 
+      {response,state} = PledgeServer.handle_call(message, state)
+      send, sender, {:response, response}
+      listen_loop(new_state,callback_module)
+
+
+     {:cast,message} ->
+        new_state = PledgeServer.handle_cast(message, state)
+        listen_loop(state,callback_module)
+
+      :clear ->
+        new_state = []
+        listen_loop(new_state,callback_module)
+
+    unexpected ->
+      IO.puts("Unexpected messaged: #{inspect(unexpected)}")
+      listen_loop(state,callback_module)
+  end
+end
+
+#...
+```
+
+Ahora ya nos encontramos en forma de empezar a usar las abstracciones de GenServer, lo cual veremos en las siguientes lecciones.
+
+Se incluyen a continuación los códigos completos referentes a los dos módulos.
+
+```elixir
+defmodule Servy.PledgeServer do
+
+  alias Servy.GenericServer 
+
+  @name :pledge_server
+
+  # Client Interface
+
+  def start do
+    IO.puts "Starting the pledge server..."
+    GnericServer.start(__MODULE__,[], @name)
+  end
+  
+
+  def create_pledge(name, amount) do
+    GenericServer.call @name, {:create_pledge, name, amount}   
+  end
+
+  def recent_pledges do
+    GenericServer.call @name, :recent_pledges
+  end
+
+  def total_pledged do
+    GenericServer.call @name, :total_pledged  
+  end
+
+  def clear do
+    GenericServer.cast @name, :clear
+  end
+  
+  #Helper Functions
+
+  def call(pid,message) do
+    send pid, {:call, self(), message}
+
+    recieve do {:response, response} -> response end
+  end
+
+  def cast(pid,message) do
+    send pid, {:cast, message}
+  end
+
+
+  # Server callbacks
+
+  def listen_loop(state) do
+    recieve do
+
+      {:call,sender, message} when is_pid(sender) -> 
+        {response,state} = handle_call(message, state)
+        send, sender, {:response, response}
+        listen_loop(new_state)
+
+
+       {:cast,message} ->
+          new_state = handle_cast(message, state)
+          listen_loop(state)
+
+        :clear ->
+          new_state = []
+          listen_loop(new_state)
+
+      unexpected ->
+        IO.puts("Unexpected messaged: #{inspect(unexpected)}")
+        listen_loop(state)
+    end
+  end
+
+def handle_cast(:clear, _state) do
+  []
+end
+
+def handle_call(:total_pledged, state) do
+  total = Enum.map(state, &elem(&1, 1)) |> Enum.sum() 
+  {total,state}  
+end
+
+def handle_call(:recent_pledges, state) do
+  {state,state}
+end
+
+def handle_call({:create_pledge, name, amount}, state) do #The whole tuple is the message.
+  {:ok, id} = send_pledge_to_service(name, amount)
+  most_recent_pledges = Enum.take(state, 2)
+  new_state = [{name, amount} | most_recent_pledges]
+  {id, new_state}       
+end
+
+alias Servy.PledgeServer
+
+pid = spawn(PledgeServer, :listen_loop, [[]])
+IO.inspects(PledgeServer.create_pledge(pid, "larry", 10))
+IO.inspects(PledgeServer.create_pledge(pid, "moe", 20))
+IO.inspects(PledgeServer.create_pledge(pid, "curly", 30))
+IO.inspects(PledgeServer.create_pledge(pid, "daisy", 40))
+IO.inspects(PledgeServer.create_pledge(pid, "grace", 50))
+
+IO.inspect(PledgeServer.recent_pledges(pid))
+```
+
+```elixir
+defmodule Servy.GenericServer do
+
+  def start(callback_module,inicial_state, name) do
+    pid = spawn(__MODULE__, :listen_loop, [inicial_state, callback_module])
+    Process.register(pid, name)
+    pid
+  end
+
+    def call(pid,message) do
+      send pid, {:call, self(), message}
+  
+      recieve do {:response, response} -> response end
+    end
+  
+    def cast(pid,message) do
+     send pid, {:cast, message}
+    end
+  
+  end
+
+  
+  def listen_loop(state,callback_module) do
+    recieve do
+  
+      {:call,sender, message} when is_pid(sender) -> 
+        {response,state} = PledgeServer.handle_call(message, state)
+        send, sender, {:response, response}
+        listen_loop(new_state,callback_module)
+  
+  
+       {:cast,message} ->
+          new_state = PledgeServer.handle_cast(message, state)
+          listen_loop(state,callback_module)
+  
+        :clear ->
+          new_state = []
+          listen_loop(new_state,callback_module)
+  
+      unexpected ->
+        IO.puts("Unexpected messaged: #{inspect(unexpected)}")
+        listen_loop(state,callback_module)
+    end
+  end
+  
+end
+
+```
