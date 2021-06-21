@@ -1,0 +1,773 @@
+# Desarrollo con Elixir/OTP XXIII
+
+## Procesos de Servidor con Estado (I)
+
+Para cualquier evento, ¿cómo va a manejar nuestro servidor las pledges? 
+Entenderemos como "pledge" a un conjunto formado por un nombre y un valor numérico. Para crear una pledge, un nombre y una cantidad van a ser enviadas a nuestro servidor como una petición POST. Enrutaremos esa petición a la función de creación de un controlador de pledges el cual enviará de vuelta la información de la pledge a un servicio externo a través de su API. 
+Permitiremos que el servicio externo controle todos los detalles que queramos tener en cuenta.
+
+Cuando queramos obtener todas las plegeds deberemos enviar una petición GET a nuestro servidor. Enrutaremos esa petición a la función *index* del controlador de Pledges, que buscará las pledges en el servicio externo.
+
+Si estuviésemos interesados en mostrar tan solo algunas de las pledges según un criterio arbitrario deberíamos crear una caché en la que se irán guardando aquellas que satisfagan la condición que estábamos definiendo de manera arbitraria.
+Esta caché se irá actualizando de manera sistemática conforme vayan actualizándose las pledges del servicio externo, añádiéndose nuevas y eliminándose las antiguas. Ni que decir queda que el contenido de la caché es muy reducido.
+
+Podemos extraer el contenido de la caché enviando una petición GET a la misma.
+
+En "handler.ex" hemos definido 2 nuevas rutas. Una de ellas para manejar la petición GET sobre "/pledges" y otra para le petición "POST" sobre "/pledges".
+
+```elixir
+# ...
+def route(%Conv{method: "POST", path: "/pledges"} = conv) do
+  Servy.PledgeController.create(conv, conv.params)
+end
+
+def route(%Conv{method: "GET", path: "/pledges"} = conv) do
+  Servy.PledgeController.index(conv)
+end
+
+# ...
+```
+
+Por otro lado, también hemos creado el controlador de pledge en "pledge_controller.ex" con el siguiente código:
+
+```elixir
+defmodule Servy.PledgeController do
+  def create(conv, %{"name" => name, "amount" => amount}) do
+    # Sends the pledge to the external service and caches it
+    create_pledge(name, String.to_integer(amount))
+
+    %{conv | status: 201, resp_body: "#{name} pledged #{amount}!"}
+  end
+
+  def index(conv) do
+    # Gets the recent pledges from the cache
+    pledges = recent_pledges()
+
+    %{conv | status: 200, resp_body: inspect(pledges)}
+  end
+end
+```
+
+La función *create* captura el nombre y la cantidad y envía la información al servicio externo y lo guarda en la caché. Esto lo haremos con la función *create_pledge*.
+
+En la función *index* se define que en la variable "pledges" se acumularán las "pledges" más recientes de la caché.
+
+Así pues, hemos de definir las funciones *create_pledge* y *recent_pledges*. Lo haremos en un nuevo módulo llamado "pledge_server".
+
+```elixir
+defmodule Servy.PledgeController do
+  def create(conv, %{"name" => name, "amount" => amount}) do
+    # Sends the pledge to the external service and caches it
+    Servy.PledgeServer.create_pledge(name, String.to_integer(amount))
+
+    %{conv | status: 201, resp_body: "#{name} pledged #{amount}!"}
+  end
+
+  def index(conv) do
+    # Gets the recent pledges from the cache
+    pledges = Servy.PledgeServer.recent_pledges()
+
+    %{conv | status: 200, resp_body: inspect(pledges)}
+  end
+end
+```
+
+```elixir
+defmodule PledgeServer do
+  def create_pleedge(name, amount) do
+    {:ok, id} = send_pledge_to_service(name, amount)
+
+    # Cache the pledge:
+    [{"larry", 10}]
+  end
+
+  def recent_pledges do
+    # Returns the most recent pledges (cache)
+    [{"larry", 10}]
+  end
+
+  defp send_pledge_to_service(_name, _amount) do
+    # CODE GOES HERE TO SEND PLEDGE TO EXTERNAL SERVICE
+    {:ok, "pledge-#{:rand.uniform(1000)}"}
+  end
+end
+```
+
+La función *recent_pledges* ha de devolver las pledges más recientes, por lo que tendrá que devolver aquellas que se encuentran alojadas en la caché. Nuestro problema ahora mismo es saber dónde vamos a conservar los datos de la caché para que la función *create_pledge* pueda actualizarla y *recent_pledges* tomar sus datos. 
+En Elixir, los procesos pueden tener un estado. En el módulo "PledgeServer" vamos a definir una función llamada *listen_loop* que continuamente recive y maneja mensajes en un bucle sin fin e inicializará un proceso que ejecuta la función. En ese proceso conservaremos un estado interno, la caché de pledges recientes.
+
+Cuandoo comienza el proceso, la lista estará vacía y conforme vayamos obteniendo las pledges se enviarán al proceso del servidor, el cual enviará la información de la pledgfe hasta el servicio externo. Mientras esto ocurre, el proceso del servidor añadirá las pledges a la caché. El proceso del servidor enviará un mensaje de vuelta indicando que la pledge se ha creado o no de manera satisfactoria. 
+El proceso de tratamiento de la petición envía una respuesta HTTP de vuelta al cliente, que por ejemplo puede ser un buscador; terminando así el proceso. Esto ocurrirá de manera sucesiva.
+
+Si ahora se envía una petición GET al proceso del servidor este devolverá el contenido de la caché.
+
+## Procesos de Servidor con Estado (II)
+
+Necesitamos incorporar una función que reciba de manera continua y sea capaz de administrar mensajes de manera indefinida.
+
+```elixir
+defmodule PledgeServer do
+  def listen_loop(state) do
+    IO.puts("\nWaiting for a message...")
+
+    recieve do
+      {:create_pledge, name, amount} ->
+        {:ok, id} = send_pledge_to_service(name, amount)
+        new_state = [{name, amount} | state]
+        IO.puts("#{name} pledged #{amount}!")
+        IO.puts("New state is #{inspect(new_state)} ")
+        listen_loop(new_state)
+    end
+  end
+
+  def create_pleedge(name, amount) do
+    {:ok, id} = send_pledge_to_service(name, amount)
+
+    # Cache the pledge:
+    [{"larry", 10}]
+  end
+
+  def recent_pledges do
+    # Returns the most recent pledges (cache)
+    [{"larry", 10}]
+  end
+
+  defp send_pledge_to_service(_name, _amount) do
+    # CODE GOES HERE TO SEND PLEDGE TO EXTERNAL SERVICE
+    {:ok, "pledge-#{:rand.uniform(1000)}"}
+  end
+end
+```
+
+Hemos de recordar que la función *recieve* tan solo devuelve un mensaje del buzón, por lo que necesitaremos llamar de manera recursiva a la función *listen_loop* para que se acceda a todos los mensajes mientras los haya.
+Introduciremos como parámetro para la función *listen_loop* una lista que será la que devuelva todo el contenido de la caché. Así pues, cada vez que se recibe un nuevo mensaje con una pledge con nombre y cantidad, esta se introduce en una lista y se llama de nuevo a la misma función tomando ahora como parámetrro la lista recién actualizada e incorporándole la siguiente pledge recibida como mensaje.
+
+```elixir
+defmodule PledgeServer do
+  def listen_loop(state) do
+    IO.puts("\nWaiting for a message...")
+
+    recieve do
+      {:create_pledge, name, amount} ->
+        {:ok, id} = send_pledge_to_service(name, amount)
+        new_state = [{name, amount} | state]
+        IO.puts("#{name} pledged #{amount}!")
+        IO.puts("New state is #{inspect(new_state)} ")
+        listen_loop(new_state)
+
+      {sender, :recent_pledges} ->
+        send(sender, {:response, state})
+        IO.puts("Sent pledges to #{inspect(sender)}")
+        listen_loop(state)
+    end
+  end
+
+  # ....
+  def create_pleedge(name, amount) do
+    {:ok, id} = send_pledge_to_service(name, amount)
+
+    # Cache the pledge:
+    [{"larry", 10}]
+  end
+
+  def recent_pledges do
+    # Returns the most recent pledges (cache)
+    [{"larry", 10}]
+  end
+
+  defp send_pledge_to_service(_name, _amount) do
+    # CODE GOES HERE TO SEND PLEDGE TO EXTERNAL SERVICE
+    {:ok, "pledge-#{:rand.uniform(1000)}"}
+  end
+
+  # ...
+end
+```
+
+Para obtener las pledges recientes en una sesión IEx podemos enviar al proceso del servidor un mensaje utilizando "*self()*" puesto que queremos que se envíe la respuesta al propio proceso de iex como primer parámetro ":recent_pledges". Obtendremos de esta manera el PID del proceso al cual han sido enviadas las pledges. De manera que, si ahora obtenemos el contenido del mensaje mediante la función "*info*" obtendremos el contenido de la lista de pledges que creamos con anterioridad. Para obtener, como tal, la lista resultante deberemos ejecutar la función *receive*.
+
+Hemos de implementar esto en el controlador de pledges para que se ejecute tal y como hemos ejecutado nosotros manualmente en la sesión IEx.
+
+```elixir
+defmodule Servy.PledgeController do
+  def create(conv, %{"name" => name, "amount" => amount}) do
+    # Sends the pledge to the external service and caches it
+    create_pledge(name, String.to_integer(amount))
+
+    %{conv | status: 201, resp_body: "#{name} pledged #{amount}!"}
+  end
+
+  def index(conv) do
+    # Gets the recent pledges from the cache
+    pledges = recent_pledges()
+
+    %{conv | status: 200, resp_body: inspect(pledges)}
+  end
+end
+```
+
+Deberemos implementar, a continuación, las funciones *create_pledge* y *recent_pledges*.
+
+## Procesos de Servidor con Estados (III)
+
+Vamos a comenzar ahora por encapsular las funciones *create_pledge* y *recent_pledge* puesto que parte del trabajo que estas realizan ya se está llevando a cabo en *listen_loop*. Por lo que la función *create_pledge* tan solo ha de enviare un mensaje al proceso del servidor.
+
+```elixir
+def create_pledge(pid, name, amount) do
+  send(pid, {:create_pledge, name, amount})
+end
+
+def recent_pledges(pid) do
+  send(pid, {self(), :recent_pledges})
+
+  recieve do
+    {:response, pledges} -> pledges
+  end
+end
+
+# ...
+
+alias Servy.PledgeServer
+
+pid = spawn(PledgeServer, :listen_loop, [[]])
+
+PledgeServer.create_pledge(pid, "larry", 10)
+PledgeServer.create_pledge(pid, "moe", 20)
+PledgeServer.create_pledge(pid, "curly", 30)
+PledgeServer.create_pledge(pid, "daisy", 40)
+PledgeServer.create_pledge(pid, "grace", 50)
+
+IO.inspect(PledgeServer.recent_pledges(pid))
+```
+
+Recordamos que estábamos interesados en únicamente recibir las pledges más recientes, es decir, las 3 o 4 que se han recibido últimamente. Para ello vamos a modificar la función *listen_loop*, incluyendo que a las dos pledges más recientes se le añada una tercera.
+
+```elixir
+def listen_loop(state) do
+  IO.puts("\nWaiting for a message...")
+
+  recieve do
+    {:create_pledge, name, amount} ->
+      {:ok, id} = send_pledge_to_service(name, amount)
+      most_recent_pledges = Enum.take(state, 2)
+      new_state = [{name, amount} | most_recent_pledges]
+      IO.puts("#{name} pledged #{amount}!")
+      IO.puts("New state is #{inspect(new_state)} ")
+      listen_loop(new_state)
+
+    {sender, :recent_pledges} ->
+      send(sender, {:response, state})
+      IO.puts("Sent pledges to #{inspect(sender)}")
+      listen_loop(state)
+  end
+end
+```
+
+Podemos eliminar las líneas de debug y de impresión por pantalla.
+
+```elixir
+def listen_loop(state) do
+  recieve do
+    {:create_pledge, name, amount} ->
+      {:ok, id} = send_pledge_to_service(name, amount)
+      most_recent_pledges = Enum.take(state, 2)
+      new_state = [{name, amount} | most_recent_pledges]
+      listen_loop(new_state)
+
+    {sender, :recent_pledges} ->
+      send(sender, {:response, state})
+      listen_loop(state)
+  end
+end
+```
+
+De manera añadida, el proceso del usuario requiere poder tener una confirmación de si la pledge se ha creado correctamente o no. De la siguiente manera podremos hacer que a cada una de  las pledges creadas se le asigne su identificador, generando un estado, el cual ahora tomará la función *create_pledge*. Así pues, hemos también de añadir una sentencia de impresión para los resultados de la función *create_pledge*.
+
+```elixir
+def listen_loop(state) do
+  recieve do
+    {sender, :create_pledge, name, amount} ->
+      {:ok, id} = send_pledge_to_service(name, amount)
+      most_recent_pledges = Enum.take(state, 2)
+      new_state = [{name, amount} | most_recent_pledges]
+      send(sender, {:response, id})
+      listen_loop(new_state)
+
+    {sender, :recent_pledges} ->
+      send(sender, {:response, state})
+      listen_loop(state)
+  end
+end
+
+def create_pledge(pid, name, amount) do
+  send(pid, {:create_pledge, name, amount})
+
+  recieve do
+    {:response, status} -> status
+  end
+end
+
+def recent_pledges(pid) do
+  send(pid, {self(), :recent_pledges})
+
+  recieve do
+    {:response, pledges} -> pledges
+  end
+end
+
+# ...
+
+alias Servy.PledgeServer
+
+pid = spawn(PledgeServer, :listen_loop, [[]])
+
+IO.inspects(PledgeServer.create_pledge(pid, "larry", 10))
+IO.inspects(PledgeServer.create_pledge(pid, "moe", 20))
+IO.inspects(PledgeServer.create_pledge(pid, "curly", 30))
+IO.inspects(PledgeServer.create_pledge(pid, "daisy", 40))
+IO.inspects(PledgeServer.create_pledge(pid, "grace", 50))
+
+IO.inspect(PledgeServer.recent_pledges(pid))
+```
+
+Encapsulemos ahora la inicialización de los procesos en una nueva función llamada *start*. Recordemos que hemos de actualizar la línea correspondiente en el cliente.
+
+```elixir
+defmodule Servy.PledgeServer do
+
+  def start do
+    IO.puts "Starting the pledge server..."
+    pid = spawn(Servy.PledgeServer, :listen_loop, [[]])
+  end
+
+
+  #...
+
+alias Servy.PledgeServer
+
+pid = PledgeServer.start()
+
+IO.inspects PledgeServer.create_pledge(pid, "larry", 10)
+IO.inspects PledgeServer.create_pledge(pid, "moe", 20)
+IO.inspects PledgeServer.create_pledge(pid, "curly", 30)
+IO.inspects PledgeServer.create_pledge(pid, "daisy", 40)
+IO.inspects PledgeServer.create_pledge(pid, "grace", 50)
+
+IO.inspect PledgeServer.recent_pledges(pid)
+```
+
+Para que no importe si hemos decidido cambiar el nombre del módulo, podemos hacer que la función *start* sea más flexible de la siguiente manera:
+
+```elixir
+# ...
+
+def start do
+  IO.puts("Starting the pledge server...")
+  pid = spawn(__MODULE__, :listen_loop, [[]])
+end
+
+# ...
+```
+
+Además, hemos de tener en cuenta que cada vez que envíamos un mensaje el PID al que se hace es el mismo, por lo que es fácil detectar cierta redundancia en nuestro código. Podemos solucionar esto en la función *start*, gracias a la fuinción *register*, la cual toma como parámetros el pid y un átomo. Son necesarias también modificaciones en las funciones que definimos antes.
+
+```elixir
+# ...
+
+def start do
+  IO.puts("Starting the pledge server...")
+  pid = spawn(__MODULE__, :listen_loop, [[]])
+  Process.register(pid, :pledge_server)
+  pid
+end
+
+# ...
+
+def listen_loop(state) do
+  recieve do
+    {sender, :create_pledge, name, amount} ->
+      {:ok, id} = send_pledge_to_service(name, amount)
+      most_recent_pledges = Enum.take(state, 2)
+      new_state = [{name, amount} | most_recent_pledges]
+      send(sender, {:response, id})
+      listen_loop(new_state)
+
+    {sender, :recent_pledges} ->
+      send(sender, {:response, state})
+      listen_loop(state)
+  end
+end
+
+def create_pledge(name, amount) do
+  send(:pledge_server, {:create_pledge, name, amount})
+
+  recieve do
+    {:response, status} -> status
+  end
+end
+
+def recent_pledges do
+  send(:recent_pledges, {self(), :recent_pledges})
+
+  recieve do
+    {:response, pledges} -> pledges
+  end
+end
+
+# ...
+
+alias Servy.PledgeServer
+
+pid = spawn(PledgeServer, :listen_loop, [[]])
+
+IO.inspects(PledgeServer.create_pledge(pid, "larry", 10))
+IO.inspects(PledgeServer.create_pledge(pid, "moe", 20))
+IO.inspects(PledgeServer.create_pledge(pid, "curly", 30))
+IO.inspects(PledgeServer.create_pledge(pid, "daisy", 40))
+IO.inspects(PledgeServer.create_pledge(pid, "grace", 50))
+
+IO.inspect(PledgeServer.recent_pledges(pid))
+```
+
+Podemos usar atributos para que el nombre registrado esté tan solo en un sitio:
+
+```elixir
+@name :pledge_server
+
+# ...
+
+def start do
+  IO.puts("Starting the pledge server...")
+  pid = spawn(__MODULE__, :listen_loop, [[]])
+  Process.register(pid, @name)
+  pid
+end
+
+# ...
+
+def create_pledge(name, amount) do
+  send(@name, {:create_pledge, name, amount})
+
+  recieve do
+    {:response, status} -> status
+  end
+end
+
+def recent_pledges do
+  send(@name, {self(), :recent_pledges})
+
+  recieve do
+    {:response, pledges} -> pledges
+  end
+end
+
+# ...
+```
+
+De esta manera, tan solo cambiando el nombre de la constante estaríamos "modificando" todos los nombres de nuestro código pues la asignación del nombre se realiza al principio y después siempre utilizamos la constante para referirnos al nombre registrado. El código final quedaría así:
+
+```elixir
+defmodule Servy.PledgeServer do
+
+
+  @name :pledge_server
+
+def start do
+  IO.puts "Starting the pledge server..."
+  pid = spawn(__MODULE__, :listen_loop, [[]])
+  Process.register(pid, @name)
+  pid
+end
+
+def listen_loop(state) do
+
+  recieve do
+    {sender, :create_pledge, name, amount} ->
+      {:ok, id} = send_pledge_to_service(name, amount)
+      most_recent_pledges = Enum.take(state,2)
+      new_state = [{name, amount} | most_recent_pledges]
+      send sender, {:response, id}
+      listen_loop(new_state)
+
+    {sender, :recent_pledges} ->
+      send(sender, {:response, state})
+      listen_loop(state)
+    end
+end
+
+
+def create_pledge(name,amount) do
+  send @name, {:create_pledge, name, amount}
+
+  recieve do {:response, status} -> status end
+end
+
+
+def recent_pledges do
+  send @name, {self(), :recent_pledges}
+
+  recieve do {:response, pledges} -> pledges end
+end
+
+defp send_pledge_to_service (_name,_amount) do
+  #CODE GOES HERE TO SEND PLEDGE TO EXTERNAL SERVICE
+  {:ok, "pledge-#{:rand.uniform(1000)}"}
+end
+
+end
+
+#alias Servy.PledgeServer
+
+#pid = spawn(PledgeServer, :listen_loop, [[]])
+
+#IO.inspects PledgeServer.create_pledge(pid, "larry", 10)
+#IO.inspects PledgeServer.create_pledge(pid, "moe", 20)
+#IO.inspects PledgeServer.create_pledge(pid, "curly", 30)
+#IO.inspects PledgeServer.create_pledge(pid, "daisy", 40)
+#IO.inspects PledgeServer.create_pledge(pid, "grace", 50)
+
+#IO.inspect PledgeServer.recent_pledges(pid)
+```
+
+## Procesos de Servidor con Estados (IV)
+
+El controlador que ya programamos debería de funcionar ahora a la perfección, pues ya hemos implementado las funciones *create_pledges* y *recent_pledges* que teníamos por crear. Organicemos ahora nuestro código para clarificar qué funciones corresponden a la interfaz del cliente y cuales a la del servidor, pues como ya sabemos podemos definir en un mismo módulo funciones que se ejecuten en diferentes procesos.
+
+```elixir
+defmodule Servy.PledgeServer do
+
+
+  @name :pledge_server
+
+#Client Interface
+
+def start do
+  IO.puts "Starting the pledge server..."
+  pid = spawn(__MODULE__, :listen_loop, [[]])
+  Process.register(pid, @name)
+  pid
+end
+
+def create_pledge(name,amount) do
+  send @name, {:create_pledge, name, amount}
+
+  recieve do {:response, status} -> status end
+end
+
+
+def recent_pledges do
+  send @name, {self(), :recent_pledges}
+
+  recieve do {:response, pledges} -> pledges end
+end
+
+
+#Server
+
+
+def listen_loop(state) do
+
+  recieve do
+    {sender, :create_pledge, name, amount} ->
+      {:ok, id} = send_pledge_to_service(name, amount)
+      most_recent_pledges = Enum.take(state,2)
+      new_state = [{name, amount} | most_recent_pledges]
+      send sender, {:response, id}
+      listen_loop(new_state)
+
+    {sender, :recent_pledges} ->
+      send(sender, {:response, state})
+      listen_loop(state)
+    end
+end
+
+defp send_pledge_to_service (_name,_amount) do
+  #CODE GOES HERE TO SEND PLEDGE TO EXTERNAL SERVICE
+  {:ok, "pledge-#{:rand.uniform(1000)}"}
+end
+
+end
+
+
+#alias Servy.PledgeServer
+
+#pid = spawn(PledgeServer, :listen_loop, [[]])
+
+#IO.inspects PledgeServer.create_pledge(pid, "larry", 10)
+#IO.inspects PledgeServer.create_pledge(pid, "moe", 20)
+#IO.inspects PledgeServer.create_pledge(pid, "curly", 30)
+#IO.inspects PledgeServer.create_pledge(pid, "daisy", 40)
+#IO.inspects PledgeServer.create_pledge(pid, "grace", 50)
+
+#IO.inspect PledgeServer.recent_pledges(pid)
+```
+
+Veamos como el proceso del servidor puede computar los datos que procesa. Descomentamos las últimas líneas de nuestro código pues ahora necesitamos ejecutarlas. Además, vamos a añadir una nueva línea en la que llamaremos a una función llamada *total_pledges* que definiremos también a continuación (no olvidemos realizar la modificación pertinente en el cuerpo de la función *listen_loop*):
+
+```elixir
+#...
+
+
+def total_pledged do
+  send @name, {self(), :total_pledged}
+
+  recieve do {:response, total} -> total end
+end
+
+#Server
+
+
+def listen_loop(state) do
+
+  recieve do
+    {sender, :create_pledge, name, amount} ->
+      {:ok, id} = send_pledge_to_service(name, amount)
+      most_recent_pledges = Enum.take(state,2)
+      new_state = [{name, amount} | most_recent_pledges]
+      send sender, {:response, id}
+      listen_loop(new_state)
+
+    {sender, :recent_pledges} ->
+      send(sender, {:response, state})
+      listen_loop(state)
+      {sender, :total_pledged} ->
+        total = Enum.map(state, &elem(&1,1)) |> Enum.sum
+        send sender, {:response, total}
+        listen_loop(state)
+    end
+end
+
+defp send_pledge_to_service (_name,_amount) do
+  #CODE GOES HERE TO SEND PLEDGE TO EXTERNAL SERVICE
+  {:ok, "pledge-#{:rand.uniform(1000)}"}
+end
+
+end
+
+
+alias Servy.PledgeServer
+
+pid = spawn(PledgeServer, :listen_loop, [[]])
+
+IO.inspects PledgeServer.create_pledge(pid, "larry", 10)
+IO.inspects PledgeServer.create_pledge(pid, "moe", 20)
+IO.inspects PledgeServer.create_pledge(pid, "curly", 30)
+IO.inspects PledgeServer.create_pledge(pid, "daisy", 40)
+IO.inspects PledgeServer.create_pledge(pid, "grace", 50)
+
+IO.inspect PledgeServer.recent_pledges(pid)
+
+IO.inspect PledgeServer.total_pledged{}
+```
+
+Como podemos observar, hemos hecho uso de la función ***elem*** de Elixir dentro del "total" que estamos calculando a partir de las cantidades contenidas en las pledges recibidas. Esta función toma como parámetro una tupla y un índice que representa las diferentes posiciones del contenido de la tupla. Esto nos dará una lista con todas las cantidades, la cual vamos a introducir en el pipeline para tratarla a nuestro gusto. En este caso, el único tratamiento a realizar en el pipeline es una suma mediante la función ***sum*** del módulo "Enum".
+
+Por el momento, las coincidencias de patrones para que se ejecuten las funciones de nuestor código tan solo aceptan mensajes con ciertas características. Es conveniente que las convirtamos para que puedan recibir cualquier mensaje y así no causemos errores de ejecución que puedan entorpecer el funcionamiento del código. Implementaremos esto en el bloque de "recieve" de *listen_loop*.
+
+```elixir
+# ...
+
+def listen_loop(state) do
+  recieve do
+    {sender, :create_pledge, name, amount} ->
+      {:ok, id} = send_pledge_to_service(name, amount)
+      most_recent_pledges = Enum.take(state, 2)
+      new_state = [{name, amount} | most_recent_pledges]
+      send(sender, {:response, id})
+      listen_loop(new_state)
+
+    {sender, :recent_pledges} ->
+      send(sender, {:response, state})
+      listen_loop(state)
+
+    {sender, :total_pledged} ->
+      total = Enum.map(state, &elem(&1, 1)) |> Enum.sum()
+      send(sender, {:response, total})
+      listen_loop(state)
+
+    unexpected ->
+      IO.puts("Unexpected messaged: #{inspect(unexpected)}")
+      listen_loop(state)
+  end
+end
+
+# ...
+```
+
+Definitivamente, el código completo que se ha implementado a lo largo de toda la lección es el siguiente:
+
+```elixir
+defmodule Servy.PledgeServer do
+  @name :pledge_server
+
+  # Client Interface
+
+  def start do
+    IO.puts("Starting the pledge server...")
+    pid = spawn(__MODULE__, :listen_loop, [[]])
+    Process.register(pid, @name)
+    pid
+  end
+
+  def create_pledge(name, amount) do
+    send(@name, {:create_pledge, name, amount})
+
+    recieve do
+      {:response, status} -> status
+    end
+  end
+
+  def recent_pledges do
+    send(@name, {self(), :recent_pledges})
+
+    recieve do
+      {:response, pledges} -> pledges
+    end
+  end
+
+  def total_pledged do
+    send(@name, {self(), :total_pledged})
+
+    recieve do
+      {:response, total} -> total
+    end
+  end
+
+  # Server
+
+  def listen_loop(state) do
+    recieve do
+      {sender, :create_pledge, name, amount} ->
+        {:ok, id} = send_pledge_to_service(name, amount)
+        most_recent_pledges = Enum.take(state, 2)
+        new_state = [{name, amount} | most_recent_pledges]
+        send(sender, {:response, id})
+        listen_loop(new_state)
+
+      {sender, :recent_pledges} ->
+        send(sender, {:response, state})
+        listen_loop(state)
+
+      {sender, :total_pledged} ->
+        total = Enum.map(state, &elem(&1, 1)) |> Enum.sum()
+        send(sender, {:response, total})
+        listen_loop(state)
+
+      unexpected ->
+        IO.puts("Unexpected messaged: #{inspect(unexpected)}")
+        listen_loop(state)
+    end
+  end
+
+
+alias Servy.PledgeServer
+
+pid = spawn(PledgeServer, :listen_loop, [[]])
+IO.inspects(PledgeServer.create_pledge(pid, "larry", 10))
+IO.inspects(PledgeServer.create_pledge(pid, "moe", 20))
+IO.inspects(PledgeServer.create_pledge(pid, "curly", 30))
+IO.inspects(PledgeServer.create_pledge(pid, "daisy", 40))
+IO.inspects(PledgeServer.create_pledge(pid, "grace", 50))
+
+IO.inspect(PledgeServer.recent_pledges(pid))
+```
