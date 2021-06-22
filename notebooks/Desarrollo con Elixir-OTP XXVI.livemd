@@ -1,0 +1,191 @@
+# Desarrollo con Elixir/OTP XXVI
+
+## Otro GenServer
+
+Ahora, vamos a ver la ejecución de otro ejemplo de GenServer. En particular, podemos usar las funciones de retorno *init* y *handle_info* para ordenar fácilmente trabajos de manera periódica.
+
+Recordemos que estuvimos trabajando en una ruta destinada a sensores que localizaban la posición de Bigfoot y tomaba tras fotografías de manera asíncrona.
+No tiene sentido que accedamos a las APIs cada vez que queramos obtener una petición. En vez de esto, queremos que introducir en la caché los resultados y refrecar la memoria cada hora. Para ello, necesitaremos otro GenServer.
+
+Partiremos del siguiente código, referente a la creación de un GenServer llamado "SensorServer":
+
+```elixir
+defmodule Servy.SensorServer do
+  @name :sensor_server
+
+  use GenServer
+
+  # Client Interface
+
+  def start do
+    GenServer.start(__MODULE__, %{}, name: @name)
+  end
+
+  def get_sensor_data do
+    GenServer.call(@name, :get_sensor_data)
+  end
+
+  # Server Callbacks
+
+  def init(_state) do
+    initial_state = run_tasks_to_get_sensor_data()
+    {:ok, initial_state}
+  end
+
+  def handle_call(:get_sensor_data, _from, state) do
+    {:reply, state, state}
+  end
+
+  defp run_tasks_to_get_sensor_data do
+    IO.puts("Running tasks to get sensor data...")
+
+    task = Task.async(fn -> Servy.Tracker.get_location("bigfoot") end)
+
+    snapshots =
+      ["cam-1", "cam-2", "cam-3"]
+      |> Enum.map(&Task.async(fn -> Servy.VideoCam.get_snapshot(&1) end))
+      |> Enum.map(&Task.await/1)
+
+    where_is_bigfoot = Task.await(task)
+
+    %{snapshots: snapshots, location: where_is_bigfoot}
+  end
+end
+```
+
+A priori, tenemos una estructura y un funcionamiento similares a los que teníamos en el GenServer que creamos en las anteriores lecciones.
+
+Característicamente ahora hemos definido una función llamada "*run_tasks_to_get_sensor_data*", encargada de ejecutar los procesos que realizaba la función *route* definida hace muchas lecciones, que mencionábamos anteriormente. El único cambio entre las dos es que ahora devolvemos los resultados contenidos en un map, el cual se introduce en la variable "initial_state" dentro de la función *init*.
+
+Ahora, es posible volver al fichero "handler.ex" para adaptar la llamada a la función que hemos definido en el servidor genérico:
+
+```elixir
+# ... handler.ex
+def route(%Conv{method: "GET", path: "/sensors"} = conv) do
+  sensor_data = Servy.SensorServer.get_sensor_data()
+
+  %{conv | status: 200, resp_body: inspect(sensor_data)}
+end
+
+# ...
+```
+
+Como estamos aprendiendo a configurar nuestro GenServer, pese a que mencionamos al comienzo que intercalaríamos en 1 hora el refrescado de la caché, vamos a realizarlo, de manera provisional, con 5 minutos.
+
+Vamos a llamar a una nueva función, alojada en el módulo "Process", dentro de la función *init* llamada "*send_after*". Esta función tiene 3 parámetros:
+
+1º El PID al que queremos enviar el mensaje. En este caso será él mismo.
+
+2º El mensaje, que será el átomo ":refresh".
+
+3º El tiempo que queremos esperar expresado en milisegundos. Para evitar hacer cálculos, vamos a utilizar el módulo "timer" de Erlang, que contiene una función con el nombre *seconds*^, que convierte el tiempo introducido en milisegundos.
+
+```elixir
+#...
+
+def init(_state) do
+  initial_state = run_tasks_to_get_sensor_data()
+  Process.send_after(send(), :refresh, :timer.seconds(5))
+  {:ok, initial_state}
+end
+
+def handle_info (:refresh, _state) do
+  IO.puts "Refreshing the cache..."
+  new_state = run_tasks_to_get_sensor_data()
+  Process.send_after(send(), :refresh, :timer.seconds(5))
+  {:noreply, new_state}
+end
+
+#...
+```
+
+Como bien sabemos, todos los mensajes que no sean call o cast serán procesados por la función *handle_info*. Así pues la definimos también. Para evitar redundancia en el la tarea de refrescado de la caché, hemos definido una función llamada *schedule_refresh* que realiza esta tarea, evitando así que esto suponga código redundante en las otras dos funciones.
+
+```elixir
+#...
+
+@refresh_interval :timer.seconds(5) #:timer.minutes(60)
+
+#...
+
+def init(_state) do
+  initial_state = run_tasks_to_get_sensor_data()
+  schedule_refresh()
+  {:ok, initial_state}
+end
+
+def handle_info (:refresh, _state) do
+  IO.puts "Refreshing the cache..."
+  new_state = run_tasks_to_get_sensor_data()
+  schedule_refresh()
+  {:noreply, new_state}
+end
+
+defp schedule_refresh do
+  Process.send_after(send(), :refresh, @refresh_interval)
+end
+#...
+
+```
+
+Se ha parametrizado, al principio del código, el intervalo de tiempo deseado.
+
+El código total de esta lección, correspondiente al GenServer "Sensor_Server" sería el siguiente:
+
+```elixir
+defmodule Servy.SensorServer do
+
+  @name :sensor_server
+  @refresh_interval :timer.seconds(5) #:timer.minutes(60)
+
+  use GenServer
+
+  # Client Interface
+
+  def start do
+    GenServer.start(__MODULE__, %{}, name: @name)
+  end
+
+  def get_sensor_data do
+    GenServer.call @name, :get_sensor_data
+  end
+
+  # Server Callbacks
+
+  def init(_state) do
+    initial_state = run_tasks_to_get_sensor_data()
+    schedule_refresh()
+    {:ok, initial_state}
+  end
+  
+  def handle_info (:refresh, _state) do
+    IO.puts "Refreshing the cache..."
+    new_state = run_tasks_to_get_sensor_data()
+    schedule_refresh()
+    {:noreply, new_state}
+  end
+  
+  defp schedule_refresh do
+    Process.send_after(send(), :refresh, @refresh_interval)
+  end
+
+  def handle_call(:get_sensor_data, _from, state) do
+    {:reply, state, state}
+  end
+
+  defp run_tasks_to_get_sensor_data do
+    IO.puts "Running tasks to get sensor data..."
+
+    task = Task.async(fn -> Servy.Tracker.get_location("bigfoot") end)
+
+    snapshots =
+      ["cam-1", "cam-2", "cam-3"]
+      |> Enum.map(&Task.async(fn -> Servy.VideoCam.get_snapshot(&1) end))
+      |> Enum.map(&Task.await/1)
+
+    where_is_bigfoot = Task.await(task)
+
+    %{snapshots: snapshots, location: where_is_bigfoot}
+  end
+end
+```
