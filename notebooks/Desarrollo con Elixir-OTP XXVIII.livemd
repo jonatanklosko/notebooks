@@ -1,0 +1,156 @@
+# Desarrollo con Elixir/OTP XXVIII
+
+## Recuperación de fallos con el Supervisor de OTP (I)
+
+A diferencia de HS, GS y SS son procesos de OTP GenServer. Debido a esto, vamos a usar otro comportamiento de OTP llamado **Supervisor**, para iniciar, monitorizar y reiniciar los procesos si estos sufren de algún tipo de fallo. Este comportamiento permite controlar más de un proceso y utilizar una serie de estrategias de reinicio como las siguiientes:
+
+-**":one_for_all"**: la cual reiniciaría todos los procesos en caso de error.
+
+-**":one_for_one"**: que reinicia tan solo el proceso deseado en caso de error.
+
+Nosotros vamos a hacer uso del segundo ejemplo de estrategia.
+
+Comenzaremos creando un nuevo fichero llamado "services_supervisor.ex":
+
+```elixir
+defmodule Servy.ServicesSupervisor do
+  use Supervisor
+
+  def start_link do
+    IO.puts("Starting the services supertvisor...")
+    Supervisor.start_link(__MODULE__, :ok, name: __MODULE__)
+  end
+
+  def init(:ok) do
+    children = [
+      Servy.PledgeServer,
+      {Servy.SensorServer, 60}
+    ]
+
+    Supervisor.init(children, strategy: :one_for_one)
+  end
+end
+```
+
+La función *start_link* inicializa un proceso supervisor y lo enlaza al proceso llamado en la propia función. El supervisor también necesita un móduloi de retorno, que será el primer parámetro de la función *start_link*.
+
+La función *init* recibe la información acerca de qué procesos necesitan ser supervisados. Para esto, como en nuestro caso van a ser 2, introduciremos la información necesaria en una lista.
+
+Para que esto funcione correctamente, es necesario que implementemos en los procesos SS y GS la función *start_link* con la finalidad de que el inicio de estos procesos se lleve a cabo mediante el proceso supervisor y se pueda asegurar el correcto funcionamiento de los dos procesos de servidor. En primer lugar vamos a modificar la ya existente función *start* de SS para convertirla en *start_link*.
+
+```elixir
+defmodule Servy.SensorServer do
+
+  @name :sensor_server
+  @refresh_interval :timer.minutes(60) #:timer.seconds(5) 
+
+  use GenServer
+
+  # Client Interface
+
+  def start_link(inteerval) do
+    IO.puts "Starting the sensor server with #{interval} min refresh ..."
+    GenServer.start_link(__MODULE__, %{}, name: @name)
+  end
+
+  #...
+```
+
+Del mismo modo, modificaremos PS:
+
+```elixir
+defmodule Servy.PledgeServer do
+
+  @name :pledge_server
+
+  use GenServer
+
+  #...
+
+  def start_link(_arg) do
+    IO.puts "Starting the pledge server..."
+    GenServer.start_link(__MODULE__, %State{}, name: @name)
+  end
+  #...
+```
+
+Existen funciones bastante útiles que debemos conocer de los supervisores como las siguientes:
+
+-**Supervisor.which_children(pid)**: recibe como parámetro un PID y muestra los procesos que está supervisando, es decir, los procesos "hijo".
+Si cambiamos "which" por "count" exclusivamente nos dirá el número de hijos que se encuentra supervisando.
+
+-**PledgeServer.child_spec([])**: ofrece toda la información sobre el proceso y cómo se inicializa.
+
+Podemos definir una función *child_spec* propia a nuestro gusto. Veamos cómo sería en PS:
+
+```elixir
+# ...
+
+def child_spec(arg) do
+  %{
+    id: Servy.PledgeServer,
+    restart: :temporary,
+    shutdown: 5000,
+    start: {Servy.PledgeServer, :start_link, [[]]},
+    type: worker
+  }
+end
+
+# ...
+```
+
+Normalmente, no se necesita tal nivel de personalización, pero es interesante contemplar las maneras que nos permite Elixir de customizar nuestro código y la forma en la que se ejecutan nuestros procesos.
+
+## Recuperación de fallos con el Supervisor de OTP (II)
+
+¿Qué pasaría si KickStarter o ServicesSupervisor fueran los que fallasen? Los supervisores pueden supervisar procesos y otros supervisores pues estos son un tipo especial de GenServer. Vamos a añadir un supervisor de mayor nivel llamado "Supervisor". Quizás suene muy redundante pero es importante destacar la prevalencia de cada proceso respecto al resto de procesos.
+
+Los errores permanecen recogidos en los subárboles específicos sin afectar al resto de procesos. Vamos a crear el supervisor en el fichero "supervisor.ex":
+
+```elixir
+defmodule Servy.Supervisor do
+  use Supervisor
+
+  def start_link do
+    IO.puts("Starting the THE supervisor...")
+    Supervisor.start_link(__MODULE__, _ok, name: __MODULE__)
+  end
+
+  def init(:ok) do
+    children = [
+      Servy.KickStarter,
+      {Servy.ServicesSupervisor}
+    ]
+
+    Supervisor.init(children, strategy: :one_for_one)
+  end
+end
+```
+
+Para que esto funcione tenemos que aplicar algún que otro cambio en KS y ServicesSupervisor:
+
+```elixir
+defmodule Servy.KickStarter do
+  use GenServer
+
+  def startt_link(_arg) do
+    IO.puts "Starting the kickstarter..."
+    GenServer.start_link(__MODULE__, :ok, name: __MODULE__)
+  end
+
+  #...
+```
+
+```elixir
+defmodule Servy.ServicesSupervisor do
+  use GenServer
+
+  def startt_link(_arg) do
+    IO.puts "Starting the services supervisor..."
+    GenServer.start_link(__MODULE__, :ok, name: __MODULE__)
+  end
+
+  #...
+```
+
+Podríamos ir enviando señales de salida a los diferentes procesos e ir contemplando cómo se realizan los reinicios de procesos desde los diferentes supervisores.
