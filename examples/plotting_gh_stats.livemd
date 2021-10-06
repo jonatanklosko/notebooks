@@ -1,0 +1,124 @@
+# Plotting GitHub stats
+
+## Setup
+
+For this notebook we're gonna use `:req` to query the GitHub API and
+then plot the data using `:vega_lite`. We also need `:kino` to show
+the plots in Livebook.
+
+```elixir
+Mix.install([
+  {:kino, "~> 0.3.0"},
+  {:vega_lite, "~> 0.1.2"},
+  {:req, "~> 0.1.0"}
+])
+```
+
+```elixir
+alias VegaLite, as: Vl
+```
+
+## Configuration
+
+First, let's configure the repository we are going to work with.
+
+<!-- livebook:{"livebook_object":"cell_input","name":"Repository","type":"text","value":"elixir-lang/elixir"} -->
+
+```elixir
+repo = IO.gets("Repository: ") |> String.trim()
+```
+
+## Code frequency
+
+We are going to reproduce the
+[code frequency plot](https://github.com/elixir-lang/elixir/graphs/code-frequency).
+GitHub API exposes [weekly commit activity](https://docs.github.com/en/rest/reference/repos#get-the-weekly-commit-activity),
+which includes additions/deletions per week.
+
+```elixir
+%{body: code_frequency} = Req.get!("https://api.github.com/repos/#{repo}/stats/code_frequency")
+code_frequency
+```
+
+We need to convert this data to a more plotting-friendly structure, like this:
+
+```elixir
+code_frequency_values =
+  for [timestamp, additions, deletions] <- code_frequency do
+    %{
+      "week" => timestamp |> DateTime.from_unix!() |> DateTime.to_date() |> Date.to_iso8601(),
+      "additions" => additions,
+      "deletions" => deletions
+    }
+  end
+```
+
+Having the data normalized we can build our plot. In this case we use two layers,
+one for additions and one for deletions, each with its own color. Both layers share
+the X axis.
+
+```elixir
+Vl.new(width: 700, height: 300, title: "#{repo} code frequency")
+|> Vl.data_from_values(code_frequency_values)
+|> Vl.encode_field(:x, "week",
+  type: :temporal,
+  axis: [grid: false, format: "%m/%Y"],
+  title: "month / year"
+)
+|> Vl.layers([
+  Vl.new()
+  |> Vl.mark(:area)
+  |> Vl.encode_field(:y, "additions", type: :quantitative, title: nil)
+  |> Vl.encode(:color, value: "#2cbe4e"),
+  Vl.new()
+  |> Vl.mark(:area)
+  |> Vl.encode_field(:y, "deletions", type: :quantitative, title: nil)
+  |> Vl.encode(:color, value: "#da3633")
+])
+```
+
+## Commit activity
+
+Next, let's try mirroring the
+[commit activity plot](https://github.com/elixir-lang/elixir/graphs/commit-activity).
+GitHub API exposes [last year of commit activity](https://docs.github.com/en/rest/reference/repos#get-the-last-year-of-commit-activity),
+which includes weekly commit count over the past year.
+
+```elixir
+%{body: commit_activity} = Req.get!("https://api.github.com/repos/#{repo}/stats/commit_activity")
+commit_activity
+```
+
+This time the data is more structured, but let's normalize it:
+
+```elixir
+commit_activity_values =
+  for %{"week" => timestamp, "total" => commits} <- commit_activity do
+    %{
+      "week" => timestamp |> DateTime.from_unix!() |> DateTime.to_date() |> Date.to_iso8601(),
+      "commits" => commits
+    }
+  end
+```
+
+To match the GitHub plot, we're going to dynamically compute a tooltip
+for each bar, which represents a single week.
+
+```elixir
+Vl.new(width: 800, height: 200, title: "#{repo} commit activity")
+|> Vl.data_from_values(commit_activity_values)
+|> Vl.transform(
+  calculate: "datum.commits + ' commits the week of ' + utcFormat(datum.week, '%b %d')",
+  as: "tooltip"
+)
+|> Vl.mark(:bar)
+|> Vl.encode_field(:x, "week",
+  type: :temporal,
+  time_unit: :yearweek,
+  axis: [grid: false, format: "%m/%d"],
+  title: "month / day"
+)
+|> Vl.encode_field(:y, "commits", type: :quantitative, title: nil)
+|> Vl.encode_field(:tooltip, "tooltip")
+|> Vl.encode(:color, value: "black")
+```
