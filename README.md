@@ -6,7 +6,7 @@ To load any of the notebooks into your local Livebook app,
 all you need to do is clicking the "Import" button on the homepage
 and inserting the notebook URL.
 
-![](./images/import.gif)
+![](./.github/images/import.gif)
 
 ## Templates
 
