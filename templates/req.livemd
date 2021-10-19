@@ -1,0 +1,15 @@
+# Req
+
+## Setup
+
+```elixir
+Mix.install([
+  {:req, "~> 0.1.1"}
+])
+```
+
+## Stuff
+
+```elixir
+%{body: body} = Req.get!("https://elixir-lang.org")
+```

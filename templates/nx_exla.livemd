@@ -1,42 +1,34 @@
-# Nx with EXLA
+# Nx/EXLA
 
 ## Setup
 
 ```elixir
 Mix.install([
-  {:exla, "~> 0.1.0-dev", github: "elixir-nx/nx", sparse: "exla"},
   {:nx, "~> 0.1.0-dev", github: "elixir-nx/nx", sparse: "nx", override: true},
-  {:benchee, "~> 1.0"}
+  {:exla, "~> 0.1.0-dev", github: "elixir-nx/nx", sparse: "exla"}
 ])
 ```
 
-## Experimentation
+## Stuff
 
 ```elixir
 t = Nx.iota({3, 3})
 ```
 
-## Compiling defn with EXLA
+## Numerical definitions
 
 ```elixir
-defmodule N do
+defmodule Calc do
   import Nx.Defn
 
   @default_defn_compiler EXLA
 
-  defn(cube(t), do: Nx.power(t, 3))
+  defn cube(t) do
+    Nx.power(t, 3)
+  end
 end
 ```
 
-## Benchmarking
-
 ```elixir
-t = Nx.iota({1000, 1000})
-
-# Useful when comparing different numerical implementations
-Benchee.run(%{
-  "cube" => fn -> N.cube(t) end
-})
-
-:ok
+Calc.cube(t)
 ```

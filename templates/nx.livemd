@@ -8,20 +8,8 @@ Mix.install([
 ])
 ```
 
-## Experimentation
+## Stuff
 
 ```elixir
 t = Nx.iota({3, 3})
-```
-
-## Numerical definitions
-
-```elixir
-defmodule N do
-  import Nx.Defn
-
-  defn cube(t) do
-    Nx.power(t, 3)
-  end
-end
 ```

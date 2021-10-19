@@ -1,0 +1,40 @@
+# Welcome 😺
+
+## Introduction
+
+Hey, happy you got here! This is the entry point to all notebooks in the
+repository, you can click around to load individual notebooks, much like
+regular pages.
+
+### Articles
+
+Pretty much regular articles, but all interactive!
+
+* [IO architecture](articles/io_architecture.livemd) - learn how IO
+  abstraction works in Erlang and Elixir
+* [Using :httpc securely](articles/httpc_security.livemd) - make secure
+  requests using the built-in `:httpc` module
+* [State synchronization with state reducers](articles/state_sync_and_reducers.livemd) -
+  solving shared, distributed state with serialized data operations
+
+### Examples
+
+Random samples showcasing Livebook use cases.
+
+* [Plotting GitHub stats](examples/plotting_gh_stats.livemd) - replicating
+  GitHub plots using `:vega_lite`
+
+### Templates
+
+Livebook templates are very simple notebooks that include boilerplate
+code, like installing dependencies. Having these in place, you can import
+or fork them and jump straight into coding.
+
+* [Nx](templates/nx.livemd)
+* [Nx/EXLA](templates/nx_exla.livemd)
+* [Nx/EXLA benchmarking](templates/nx_exla_bench.livemd)
+* [HTTP requests](templates/req.livemd)
+
+<!-- livebook:{"break_markdown":true} -->
+
+![](https://images.unsplash.com/photo-1599889959407-598566c6e1f1?ixlib=rb-1.2.1&auto=format&fit=crop&w=400&q=80)

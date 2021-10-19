@@ -1,0 +1,43 @@
+# Nx/EXLA benchmarking
+
+## Setup
+
+```elixir
+Mix.install([
+  {:nx, "~> 0.1.0-dev", github: "elixir-nx/nx", sparse: "nx", override: true},
+  {:exla, "~> 0.1.0-dev", github: "elixir-nx/nx", sparse: "exla"},
+  {:benchee, "~> 1.0"}
+])
+```
+
+## Compiling defn with EXLA
+
+```elixir
+defmodule Calc do
+  import Nx.Defn
+
+  @default_defn_compiler EXLA
+
+  defn cube_power(t) do
+    Nx.power(t, 3)
+  end
+
+  defn cube_multiply(t) do
+    t |> Nx.multiply(t) |> Nx.multiply(t)
+  end
+end
+```
+
+## Benchmarking
+
+```elixir
+t = Nx.iota({1000, 1000})
+
+# Useful when comparing different numerical implementations
+Benchee.run(%{
+  "cube_power" => fn -> Calc.cube_power(t) end,
+  "cube_multiply" => fn -> Calc.cube_multiply(t) end
+})
+
+:ok
+```
