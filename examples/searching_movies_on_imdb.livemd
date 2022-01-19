@@ -1,0 +1,116 @@
+# Searching movies on IMDb
+
+## Setup
+
+In this notebook we're gonna scrape and show some data from IMDb,
+we need `req` for fetching the content, `floki` for parsing HTML
+and `kino` for presenting the final results:
+
+```elixir
+Mix.install([
+  {:req, "~> 0.2.0"},
+  {:floki, "~> 0.32.0"},
+  {:kino, "~> 0.5.0"}
+])
+```
+
+## Finding the movie
+
+Let's start with adding a search input, so that we can easily
+change the parameters later:
+
+```elixir
+search = Kino.Input.text("Search", default: "Inception")
+```
+
+We are ready do scrape some content, first we need to hit
+the search page and find movies matching the search.
+
+```elixir
+search = search |> Kino.Input.read() |> String.trim()
+
+query = %{"q" => search}
+
+%{body: body} = Req.get!("https://www.imdb.com/find?" <> URI.encode_query(query))
+
+search_result =
+  body
+  |> Floki.parse_document!()
+  |> Floki.find(".findList .findResult a")
+  |> case do
+    [] ->
+      :error
+
+    [a | _] ->
+      [path] = Floki.attribute(a, "href")
+      {:ok, "https://www.imdb.com" <> path}
+  end
+```
+
+We take the first result, which should correspond to the best match.
+
+## Fetching movie details
+
+Having found a matching movie, we can get more specific data
+from the actual movie page!
+
+```elixir
+movie_result =
+  with {:ok, movie_url} <- search_result do
+    %{body: body} = Req.get!(movie_url, headers: ["accept-language": "en-US"])
+
+    doc = Floki.parse_document!(body)
+
+    title =
+      doc
+      |> Floki.find(~s{[data-testid="hero-title-block__title"]})
+      |> Floki.text()
+
+    plot =
+      doc
+      |> Floki.find(~s{[data-testid="plot-xl"]})
+      |> Floki.text()
+
+    image_url =
+      doc
+      |> Floki.find(~s{[data-testid="hero-media__poster"] img})
+      |> Floki.attribute("src")
+      |> case do
+        [url] -> url
+        _ -> "https://media2.giphy.com/media/llfVoXzlEppScDN9V5/200.gif"
+      end
+
+    {:ok, %{url: movie_url, title: title, plot: plot, image_url: image_url}}
+  end
+```
+
+## Presenting the data
+
+Finally, with all information at hand, we can present it nicely to
+the user by using `Kino.Markdown`:
+
+<!-- livebook:{"reevaluate_automatically":true} -->
+
+```elixir
+markdown =
+  case movie_result do
+    :error ->
+      "No movie found :<"
+
+    {:ok, movie} ->
+      """
+      # #{movie.title}
+
+      #{movie.plot}. [Read more](#{movie.url})
+
+      ![](#{movie.image_url})
+      """
+  end
+
+Kino.Markdown.new(markdown)
+```
+
+That's it! Note that the last cell says "Reevaluates automatically",
+to see it in action go ahead and edit the search input. The result
+will update automatically. We effectively prototyped a tiny application,
+directly in Livebook!
