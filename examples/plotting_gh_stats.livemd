@@ -2,15 +2,15 @@
 
 ## Setup
 
-For this notebook we're gonna use `:req` to query the GitHub API and
-then plot the data using `:vega_lite`. We also need `:kino` to show
+For this notebook we're gonna use `req` to query the GitHub API and
+then plot the data using `vega_lite`. We also need `kino` to show
 the plots in Livebook.
 
 ```elixir
 Mix.install([
-  {:kino, "~> 0.3.0"},
+  {:kino, "~> 0.5.0"},
   {:vega_lite, "~> 0.1.2"},
-  {:req, "~> 0.1.0"}
+  {:req, "~> 0.2.0"}
 ])
 ```
 
@@ -22,10 +22,12 @@ alias VegaLite, as: Vl
 
 First, let's configure the repository we are going to work with.
 
-<!-- livebook:{"livebook_object":"cell_input","name":"Repository","type":"text","value":"elixir-lang/elixir"} -->
+```elixir
+repo_input = Kino.Input.text("Repository")
+```
 
 ```elixir
-repo = IO.gets("Repository: ") |> String.trim()
+repo = Kino.Input.read(repo_input)
 ```
 
 ## Code frequency
