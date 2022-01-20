@@ -22,7 +22,9 @@ Pretty much regular articles, but all interactive!
 Random samples showcasing Livebook use cases.
 
 * [Plotting GitHub stats](examples/plotting_gh_stats.livemd) - replicating
-  GitHub plots using `:vega_lite`
+  GitHub plots using `vega_lite`
+* [Searching movies on IMDb](examples/searching_movies_on_imdb.livemd) - scraping
+  and presenting movies data from IMDb
 
 ### Templates
 
