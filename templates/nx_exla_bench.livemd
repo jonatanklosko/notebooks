@@ -10,13 +10,15 @@ Mix.install([
 ])
 ```
 
+```elixir
+Nx.Defn.global_default_options(compiler: EXLA)
+```
+
 ## Compiling defn with EXLA
 
 ```elixir
 defmodule Calc do
   import Nx.Defn
-
-  @default_defn_compiler EXLA
 
   defn cube_power(t) do
     Nx.power(t, 3)

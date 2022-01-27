@@ -9,6 +9,10 @@ Mix.install([
 ])
 ```
 
+```elixir
+Nx.Defn.global_default_options(compiler: EXLA)
+```
+
 ## Stuff
 
 ```elixir
@@ -20,8 +24,6 @@ t = Nx.iota({3, 3})
 ```elixir
 defmodule Calc do
   import Nx.Defn
-
-  @default_defn_compiler EXLA
 
   defn cube(t) do
     Nx.power(t, 3)
