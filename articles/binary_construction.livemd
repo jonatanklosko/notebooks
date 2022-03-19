@@ -311,7 +311,7 @@ For smaller binaries there is no significant difference between any
 of the functions. The difference starts to manifest itself when we
 compare the results for size-60 and size-70 binaries, and this is not
 a coincidence! Binaries over 64 bytes are always allocated outside the
-process cheap and involve reference counting, so it seems fair that
+process heap and involve reference counting, so it seems fair that
 copying those has more overhead.
 
 For size-1000 binaries we can see that functions appending to the binary

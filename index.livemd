@@ -14,6 +14,8 @@ Pretty much regular articles, but all interactive!
   abstraction works in Erlang and Elixir
 * [Using :httpc securely](articles/httpc_security.livemd) - make secure
   requests using the built-in `:httpc` module
+* [Binary construction](articles/binary_construction.livemd) - see how
+  to leverage runtime optimisations when constructing large binaries
 * [State synchronization with state reducers](articles/state_sync_and_reducers.livemd) -
   solving shared, distributed state with serialized data operations
 
