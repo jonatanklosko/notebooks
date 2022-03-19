@@ -1,0 +1,348 @@
+<!-- livebook:{"persist_outputs":true} -->
+
+# Binary construction
+
+## Introduction
+
+Erlang provides heavy runtime optimisations for building and matching
+binaries, as outlined in in the [this guide](https://www.erlang.org/doc/efficiency_guide/binaryhandling.html).
+
+Consider the following example:
+
+```elixir
+x = <<0>>
+x = <<x::binary, 1>>
+x = <<x::binary, 2>>
+x = <<x::binary, 3>>
+```
+
+<!-- livebook:{"output":true} -->
+
+```
+<<0, 1, 2, 3>>
+```
+
+The first time we append something to the binary, a [refc binary](https://www.erlang.org/doc/efficiency_guide/binaryhandling.html#refc_binary)
+is created with additional space allocated. This way, subsequent appends
+don't involve copying the original binary and instead use the preallocated
+space.
+
+Another possible way of accumulating the binary would be by prepending the
+bytes, as in:
+
+```elixir
+x = <<3>>
+x = <<2, x::binary>>
+x = <<1, x::binary>>
+x = <<0, x::binary>>
+```
+
+<!-- livebook:{"output":true} -->
+
+```
+<<0, 1, 2, 3>>
+```
+
+However, since the additional buffer is allocated on the right of the
+original binary, this approach doesn't leverage the same optimisations.
+
+<!-- livebook:{"break_markdown":true} -->
+
+### Relevance
+
+This difference matters when defining a recursive function that builds
+a binary result. There are two primary ways of defining such function.
+
+The first approach is to use an accumulator and tail recursion:
+
+<!-- livebook:{"force_markdown":true} -->
+
+```elixir
+defp build(acc, ...), do: build(<<acc::binary, ...>>, ...)
+```
+
+On the other hand, as with lists, it may be tempting to use body recursion
+instead, which possibly makes the code more intuitive:
+
+<!-- livebook:{"force_markdown":true} -->
+
+```elixir
+defp build(acc, ...), do: ... <> build(...)
+```
+
+In the first approach we append to a binary, while in the second we keep
+prepending while folding the recursive result.
+
+<!-- livebook:{"break_markdown":true} -->
+
+### Goal
+
+In this notebook we compare how the two approaches differ in performance.
+
+## Setup
+
+We will use [`benchee`](https://hexdocs.pm/benchee/readme.html) for our
+measurements.
+
+```elixir
+Mix.install([
+  {:benchee, "~> 1.1.0"}
+])
+```
+
+<!-- livebook:{"output":true} -->
+
+```
+:ok
+```
+
+## Benchmark
+
+As our benchmark task, we want to build a binary of the given size
+by adding bytes one by one.
+
+Below we define four functions, which combine the following properties:
+
+* the byte order in the final result, either left-to-right (`_lr`) or
+  right-to-left (`_rl`)
+
+* whether the function uses tail recursion with an accumulator (`_acc`)
+  or body recursion (`_noacc`)
+
+We are primarily interested in the difference between `build_lr_acc`
+and `build_lr_noacc`, since they directly represent the approaches
+outlined above. The `_rl` alternatives are included for cases where the
+binary needs to be built right-to-left
+
+```elixir
+defmodule BinaryTest do
+  def build_lr_acc(size), do: build_lr_acc(<<>>, size)
+  defp build_lr_acc(acc, 0), do: acc
+  defp build_lr_acc(acc, size), do: build_lr_acc(<<acc::binary, size>>, size - 1)
+
+  def build_lr_noacc(0), do: <<>>
+  def build_lr_noacc(size), do: <<size>> <> build_lr_noacc(size - 1)
+
+  def build_rl_acc(size), do: build_rl_acc(<<>>, size)
+  defp build_rl_acc(acc, 0), do: acc
+  defp build_rl_acc(acc, size), do: build_rl_acc(<<size, acc::binary>>, size - 1)
+
+  def build_rl_noacc(0), do: <<>>
+  def build_rl_noacc(size), do: build_rl_noacc(size - 1) <> <<size>>
+end
+```
+
+<!-- livebook:{"output":true} -->
+
+```
+{:module, BinaryTest, <<70, 79, 82, 49, 0, 0, 9, ...>>, {:build_rl_noacc, 1}}
+```
+
+```elixir
+results =
+  Benchee.run(
+    %{
+      "left-to-right with acc" => fn size -> BinaryTest.build_lr_acc(size) end,
+      "left-to-right without acc" => fn size -> BinaryTest.build_lr_noacc(size) end,
+      "right-to-left with acc" => fn size -> BinaryTest.build_rl_acc(size) end,
+      "right-to-left without acc" => fn size -> BinaryTest.build_rl_noacc(size) end
+    },
+    inputs: %{
+      "1. size 10" => 10,
+      "2. size 30" => 30,
+      "3. size 60" => 60,
+      "4. size 70" => 70,
+      "5. size 100" => 100,
+      "6. size 1_000" => 1_000,
+      "7. size 100_000" => 100_000
+    }
+  )
+
+:ok
+```
+
+<!-- livebook:{"output":true} -->
+
+```
+Operating System: Linux
+CPU Information: Intel(R) Core(TM) i5-6200U CPU @ 2.30GHz
+Number of Available Cores: 4
+Available memory: 30.79 GB
+Elixir 1.13.0
+Erlang 24.1.2
+
+Benchmark suite executing with the following configuration:
+warmup: 2 s
+time: 5 s
+memory time: 0 ns
+reduction time: 0 ns
+parallel: 1
+inputs: 1. size 10, 2. size 30, 3. size 60, 4. size 70, 5. size 100, 6. size 1_000, 7. size 100_000
+Estimated total run time: 3.27 min
+
+Benchmarking left-to-right with acc with input 1. size 10 ...
+Benchmarking left-to-right with acc with input 2. size 30 ...
+Benchmarking left-to-right with acc with input 3. size 60 ...
+Benchmarking left-to-right with acc with input 4. size 70 ...
+Benchmarking left-to-right with acc with input 5. size 100 ...
+Benchmarking left-to-right with acc with input 6. size 1_000 ...
+Benchmarking left-to-right with acc with input 7. size 100_000 ...
+Benchmarking left-to-right without acc with input 1. size 10 ...
+Benchmarking left-to-right without acc with input 2. size 30 ...
+Benchmarking left-to-right without acc with input 3. size 60 ...
+Benchmarking left-to-right without acc with input 4. size 70 ...
+Benchmarking left-to-right without acc with input 5. size 100 ...
+Benchmarking left-to-right without acc with input 6. size 1_000 ...
+Benchmarking left-to-right without acc with input 7. size 100_000 ...
+Benchmarking right-to-left with acc with input 1. size 10 ...
+Benchmarking right-to-left with acc with input 2. size 30 ...
+Benchmarking right-to-left with acc with input 3. size 60 ...
+Benchmarking right-to-left with acc with input 4. size 70 ...
+Benchmarking right-to-left with acc with input 5. size 100 ...
+Benchmarking right-to-left with acc with input 6. size 1_000 ...
+Benchmarking right-to-left with acc with input 7. size 100_000 ...
+Benchmarking right-to-left without acc with input 1. size 10 ...
+Benchmarking right-to-left without acc with input 2. size 30 ...
+Benchmarking right-to-left without acc with input 3. size 60 ...
+Benchmarking right-to-left without acc with input 4. size 70 ...
+Benchmarking right-to-left without acc with input 5. size 100 ...
+Benchmarking right-to-left without acc with input 6. size 1_000 ...
+Benchmarking right-to-left without acc with input 7. size 100_000 ...
+
+##### With input 1. size 10 #####
+Name                                ips        average  deviation         median         99th %
+left-to-right without acc      624.73 K        1.60 μs  ±2021.43%        1.02 μs        3.40 μs
+right-to-left with acc         621.02 K        1.61 μs  ±2303.97%        0.99 μs        3.39 μs
+right-to-left without acc      562.83 K        1.78 μs  ±1964.14%        1.09 μs        4.35 μs
+left-to-right with acc         515.46 K        1.94 μs  ±1976.17%        1.10 μs        4.68 μs
+
+Comparison:
+left-to-right without acc      624.73 K
+right-to-left with acc         621.02 K - 1.01x slower +0.00957 μs
+right-to-left without acc      562.83 K - 1.11x slower +0.176 μs
+left-to-right with acc         515.46 K - 1.21x slower +0.34 μs
+
+##### With input 2. size 30 #####
+Name                                ips        average  deviation         median         99th %
+right-to-left with acc         394.82 K        2.53 μs  ±1258.75%        1.66 μs        5.79 μs
+left-to-right without acc      356.26 K        2.81 μs  ±1142.61%        1.82 μs        6.05 μs
+left-to-right with acc         327.81 K        3.05 μs  ±1483.31%        1.74 μs        7.77 μs
+right-to-left without acc      327.50 K        3.05 μs  ±1193.91%        1.81 μs        8.87 μs
+
+Comparison:
+right-to-left with acc         394.82 K
+left-to-right without acc      356.26 K - 1.11x slower +0.27 μs
+left-to-right with acc         327.81 K - 1.20x slower +0.52 μs
+right-to-left without acc      327.50 K - 1.21x slower +0.52 μs
+
+##### With input 3. size 60 #####
+Name                                ips        average  deviation         median         99th %
+right-to-left with acc         260.50 K        3.84 μs   ±731.31%        2.60 μs       13.21 μs
+left-to-right with acc         242.14 K        4.13 μs   ±614.73%        2.73 μs       18.29 μs
+left-to-right without acc      240.02 K        4.17 μs   ±694.06%        2.90 μs       15.76 μs
+right-to-left without acc      238.66 K        4.19 μs   ±607.83%        2.82 μs       20.16 μs
+
+Comparison:
+right-to-left with acc         260.50 K
+left-to-right with acc         242.14 K - 1.08x slower +0.29 μs
+left-to-right without acc      240.02 K - 1.09x slower +0.33 μs
+right-to-left without acc      238.66 K - 1.09x slower +0.35 μs
+
+##### With input 4. size 70 #####
+Name                                ips        average  deviation         median         99th %
+right-to-left without acc      215.12 K        4.65 μs   ±592.67%        3.16 μs       20.55 μs
+left-to-right with acc         211.87 K        4.72 μs   ±615.95%        3.06 μs       20.38 μs
+right-to-left with acc         167.12 K        5.98 μs   ±502.01%        3.52 μs       23.25 μs
+left-to-right without acc      156.37 K        6.40 μs   ±475.24%        3.86 μs       24.04 μs
+
+Comparison:
+right-to-left without acc      215.12 K
+left-to-right with acc         211.87 K - 1.02x slower +0.0713 μs
+right-to-left with acc         167.12 K - 1.29x slower +1.34 μs
+left-to-right without acc      156.37 K - 1.38x slower +1.75 μs
+
+##### With input 5. size 100 #####
+Name                                ips        average  deviation         median         99th %
+right-to-left without acc      170.82 K        5.85 μs   ±458.18%        4.18 μs       22.33 μs
+left-to-right with acc         169.88 K        5.89 μs   ±466.18%        4.03 μs       22.37 μs
+right-to-left with acc          75.00 K       13.33 μs   ±312.55%        6.97 μs      102.85 μs
+left-to-right without acc       74.50 K       13.42 μs   ±288.92%        7.42 μs      103.32 μs
+
+Comparison:
+right-to-left without acc      170.82 K
+left-to-right with acc         169.88 K - 1.01x slower +0.0323 μs
+right-to-left with acc          75.00 K - 2.28x slower +7.48 μs
+left-to-right without acc       74.50 K - 2.29x slower +7.57 μs
+
+##### With input 6. size 1_000 #####
+Name                                ips        average  deviation         median         99th %
+left-to-right with acc          24.48 K       40.84 μs    ±36.41%       34.34 μs       90.51 μs
+right-to-left without acc       23.38 K       42.78 μs    ±36.03%       36.44 μs       89.42 μs
+right-to-left with acc           4.49 K      222.76 μs    ±39.60%      195.33 μs      507.30 μs
+left-to-right without acc        4.19 K      238.94 μs    ±37.44%      204.73 μs      513.32 μs
+
+Comparison:
+left-to-right with acc          24.48 K
+right-to-left without acc       23.38 K - 1.05x slower +1.94 μs
+right-to-left with acc           4.49 K - 5.45x slower +181.92 μs
+left-to-right without acc        4.19 K - 5.85x slower +198.10 μs
+
+##### With input 7. size 100_000 #####
+Name                                ips        average  deviation         median         99th %
+left-to-right with acc           250.56        3.99 ms    ±23.36%        3.70 ms        7.13 ms
+right-to-left without acc        100.25        9.98 ms    ±22.40%        9.45 ms       16.96 ms
+right-to-left with acc             3.78      264.74 ms     ±3.33%      262.14 ms      287.95 ms
+left-to-right without acc          0.36     2767.05 ms     ±1.68%     2767.05 ms     2799.94 ms
+
+Comparison:
+left-to-right with acc           250.56
+right-to-left without acc        100.25 - 2.50x slower +5.98 ms
+right-to-left with acc             3.78 - 66.33x slower +260.75 ms
+left-to-right without acc          0.36 - 693.31x slower +2763.06 ms
+```
+
+<!-- livebook:{"output":true} -->
+
+```
+:ok
+```
+
+For smaller binaries there is no significant difference between any
+of the functions. The difference starts to manifest itself when we
+compare the results for size-60 and size-70 binaries, and this is not
+a coincidence! Binaries over 64 bytes are always allocated outside the
+process cheap and involve reference counting, so it seems fair that
+copying those has more overhead.
+
+For size-1000 binaries we can see that functions appending to the binary
+turned out 5 times faster and the difference escalate as the binary grows.
+
+## tl;dr
+
+As a rule of thumb,
+
+* when building binaries left-to-right use a tail-recursive function with
+  an accumulator
+
+  ```elixir
+  defp build(acc, ...), do: build(<<acc::binary, ...>>, ...)
+  ```
+
+* when building binaries right-to-left use a body-recursive function
+
+  ```elixir
+  defp build(acc, ...), do: build(...) <> ...
+  ```
+
+When accumulating binaries below 64 bytes, the approach doesn't really matter.
+
+## Final notes
+
+When constructing large binaries it is crucial to leverage the Erlang runtime
+optimisations to avoid copying the binary over and over. In this notebook we
+compared append- and prepend- based approaches and came up with a guideline
+to ensure the best performance.
+
+References:
+
+* [Erlang Efficiency Guide: Constructing and Matching Binaries](https://www.erlang.org/doc/efficiency_guide/binaryhandling.html)
