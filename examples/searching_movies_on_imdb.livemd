@@ -1,18 +1,18 @@
 # Searching movies on IMDb
 
-## Setup
-
-In this notebook we're gonna scrape and show some data from IMDb,
-we need `req` for fetching the content, `floki` for parsing HTML
-and `kino` for presenting the final results:
-
 ```elixir
 Mix.install([
   {:req, "~> 0.2.0"},
   {:floki, "~> 0.32.0"},
-  {:kino, "~> 0.5.0"}
+  {:kino, "~> 0.6.1"}
 ])
 ```
+
+## Introduction
+
+In this notebook we're gonna scrape and show some data from IMDb,
+we will use `req` for fetching the content, `floki` for parsing HTML
+and `kino` for presenting the final results.
 
 ## Finding the movie
 

@@ -1,14 +1,12 @@
 # Nx
 
-## Setup
-
 ```elixir
 Mix.install([
-  {:nx, "~> 0.1.0-dev", github: "elixir-nx/nx", sparse: "nx"}
+  {:nx, "~> 0.2.0"}
 ])
 ```
 
-## Stuff
+## 🐈
 
 ```elixir
 t = Nx.iota({3, 3})

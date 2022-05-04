@@ -1,20 +1,12 @@
 # Plotting GitHub stats
 
-## Setup
-
-For this notebook we're gonna use `req` to query the GitHub API and
-then plot the data using `vega_lite`. We also need `kino` to show
-the plots in Livebook.
-
 ```elixir
 Mix.install([
-  {:kino, "~> 0.5.0"},
-  {:vega_lite, "~> 0.1.2"},
+  {:kino, "~> 0.6.1"},
+  {:kino_vega_lite, "~> 0.1.1"},
   {:req, "~> 0.2.0"}
 ])
-```
 
-```elixir
 alias VegaLite, as: Vl
 ```
 
