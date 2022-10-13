@@ -2,8 +2,8 @@
 
 ```elixir
 Mix.install([
-  {:nx, "~> 0.2.0"},
-  {:exla, "~> 0.2.0"}
+  {:nx, "~> 0.3.0"},
+  {:exla, "~> 0.3.0"}
 ])
 
 Nx.default_backend(EXLA.Backend)

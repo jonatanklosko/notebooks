@@ -1,0 +1,426 @@
+# Meow 🐈
+
+```elixir
+Mix.install([
+  {:meow, github: "jonatanklosko/meow", ref: "bb1c0467e82a3dd4ce24a8d2ac384a4c410a0c44"},
+  {:nx, "~> 0.3.0"},
+  {:exla, "~> 0.3.0"},
+  {:maplibre, "~> 0.1.2"},
+  {:kino_maplibre, "~> 0.1.3"},
+  {:kino_vega_lite, "~> 0.1.4"}
+])
+
+Nx.Defn.global_default_options(compiler: EXLA)
+```
+
+## Primary objectives
+
+![](images/goals.png)
+
+<!-- livebook:{"branch_parent_index":0} -->
+
+## Example: One-Max
+
+One-Max is a toy problem where each gene is either 0 or 1 and the objective is to maximise the number of ones.
+
+```elixir
+defmodule OneMax do
+  import Nx.Defn
+
+  def size, do: 100
+
+  defn evaluate(genomes) do
+    Nx.sum(genomes, axes: [1])
+  end
+end
+```
+
+```elixir
+Nx.tensor([
+  [0, 1, 1, 1, 0],
+  [1, 0, 0, 1, 0]
+])
+|> OneMax.evaluate()
+```
+
+In this case we will use a straightforwrad algorithm with linear steps:
+
+<!-- livebook:{"break_markdown":true} -->
+
+```mermaid
+graph TD;
+    1[Population N];
+    2[Select parents];
+    3[Crossover];
+    4[Mutate];
+    5[Population N+1];
+
+    1-->2;
+    2-->3;
+    3-->4;
+    4-->5;
+```
+
+```elixir
+algorithm =
+  Meow.objective(&OneMax.evaluate/1)
+  |> Meow.add_pipeline(
+    MeowNx.Ops.init_binary_random_uniform(100, OneMax.size()),
+    Meow.pipeline([
+      MeowNx.Ops.selection_tournament(1.0),
+      MeowNx.Ops.crossover_uniform(0.5),
+      MeowNx.Ops.mutation_bit_flip(0.001),
+      MeowNx.Ops.log_best_individual(),
+      Meow.Ops.max_generations(100)
+    ])
+  )
+
+report = Meow.run(algorithm)
+
+report |> Meow.Report.format_summary() |> IO.puts()
+```
+
+<!-- livebook:{"branch_parent_index":0} -->
+
+## Example: Rastrigin
+
+![](images/rastrigin.png)
+
+$$
+f(\textbf{x}) = \sum_{i=0}^n \left[10 + x_i^2 - 10 \cos({2 \pi x_i}) \right]
+$$
+
+```elixir
+defmodule Rastrigin do
+  import Nx.Defn
+
+  def size, do: 100
+
+  @two_pi 2 * :math.pi()
+
+  defn evaluate(genomes) do
+    sums = (10 + genomes ** 2 - 10 * Nx.cos(@two_pi * genomes)) |> Nx.sum(axes: [1])
+    -sums
+  end
+end
+```
+
+Here we introduce **elitism**, we want to preserve the best individuals unchanged in every generation.
+
+<!-- livebook:{"break_markdown":true} -->
+
+```mermaid
+graph TD;
+    1[Population N];
+    2[Select top 20%];
+    3["Select parents (80%)"];
+    4[Crossover];
+    5[Mutation];
+    6[Population N+1];
+
+    1-->2;
+    2-->6;
+
+    1-->3;
+    3-->4;
+    4-->5;
+    5-->6;
+```
+
+```elixir
+algorithm =
+  Meow.objective(&Rastrigin.evaluate/1)
+  |> Meow.add_pipeline(
+    MeowNx.Ops.init_real_random_uniform(100, Rastrigin.size(), -5.12, 5.12),
+    Meow.pipeline([
+      Meow.Ops.split_join([
+        Meow.pipeline([
+          MeowNx.Ops.selection_natural(0.2)
+        ]),
+        Meow.pipeline([
+          MeowNx.Ops.selection_tournament(0.8),
+          MeowNx.Ops.crossover_blend_alpha(0.5),
+          MeowNx.Ops.mutation_shift_gaussian(0.001)
+        ])
+      ]),
+      MeowNx.Ops.log_best_individual(),
+      MeowNx.Ops.log_metrics(%{fitness_max: &MeowNx.Metric.fitness_max/2}, interval: 10),
+      Meow.Ops.max_generations(3_000)
+    ])
+  )
+
+report = Meow.run(algorithm)
+
+report |> Meow.Report.format_summary() |> IO.puts()
+
+Meow.Report.plot_metrics(report)
+```
+
+<!-- livebook:{"branch_parent_index":0} -->
+
+## Example: shortest route
+
+```elixir
+visualize_route = fn coordinates ->
+  coordinates = for {lat, lng} <- coordinates, do: {lng, lat}
+
+  MapLibre.new(center: {19.938068, 50.058023}, zoom: 13, style: :street)
+  |> MapLibre.add_source("route",
+    type: :geojson,
+    data: [type: "Feature", geometry: [type: "LineString", coordinates: coordinates]]
+  )
+  |> MapLibre.add_layer(id: "points", type: :circle, source: "route", paint: [circle_radius: 6])
+  |> MapLibre.add_layer(id: "route", type: :line, source: "route", paint: [line_width: 2])
+end
+```
+
+```elixir
+coordinates =
+  Enum.shuffle([
+    {50.066405, 19.939034},
+    {50.066254, 19.935942},
+    {50.063473, 19.932803},
+    {50.063258, 19.927582},
+    {50.062526, 19.925365},
+    {50.061810, 19.925666},
+    {50.062211, 19.927711},
+    {50.059787, 19.927925},
+    {50.060585, 19.932391},
+    {50.058684, 19.933070},
+    {50.055378, 19.934831},
+    {50.055300, 19.937495},
+    {50.054093, 19.939161},
+    {50.053298, 19.937308},
+    {50.052444, 19.935140},
+    {50.051337, 19.935554},
+    {50.051806, 19.937508},
+    {50.050745, 19.938388},
+    {50.049891, 19.935064},
+    {50.049268, 19.932833}
+  ])
+
+visualize_route.(coordinates)
+```
+
+```elixir
+defmodule Geodesy do
+  import Nx.Defn
+
+  @doc """
+  Calculates pairwise distance between geographic points in kilometres.
+  """
+  defn distance_matrix(lat, lng) do
+    lat1 = Nx.new_axis(lat, 0)
+    lng1 = Nx.new_axis(lng, 0)
+    lat2 = Nx.new_axis(lat, 1)
+    lng2 = Nx.new_axis(lng, 1)
+
+    # See https://www.movable-type.co.uk/scripts/latlong.html#equirectangular
+    x = to_radians(lng2 - lng1) * Nx.cos(to_radians(lat1 + lat2) / 2)
+    y = to_radians(lat2 - lat1)
+    Nx.sqrt(x ** 2 + y ** 2) * 6371
+  end
+
+  @pi :math.pi()
+
+  defnp to_radians(deg) do
+    deg * @pi / 180
+  end
+end
+```
+
+First, we compute a matrix with distance between each pair of points.
+
+```elixir
+route_size = length(coordinates)
+
+{lat, lng} = Enum.unzip(coordinates)
+distances = Geodesy.distance_matrix(Nx.tensor(lat), Nx.tensor(lng))
+```
+
+Next, we define our objective.
+
+```elixir
+defmodule Problem do
+  import Nx.Defn
+
+  defn evaluate(permutations, distances) do
+    edges =
+      Nx.stack(
+        [
+          permutations[[0..-1//1, 0..-2//1]],
+          permutations[[0..-1//1, 1..-1//1]]
+        ],
+        axis: -1
+      )
+
+    total_distance = distances |> Nx.gather(edges) |> Nx.sum(axes: [1])
+    -total_distance
+  end
+end
+```
+
+In this case, our algorithm will involve multiple cooperating populations!
+
+```elixir
+algorithm =
+  Meow.objective(&Problem.evaluate(&1, distances))
+  |> Meow.add_pipeline(
+    MeowNx.Ops.Permutation.init_permutation_random(200, route_size),
+    Meow.pipeline([
+      Meow.Ops.split_join([
+        Meow.pipeline([
+          MeowNx.Ops.selection_natural(0.2)
+        ]),
+        Meow.pipeline([
+          MeowNx.Ops.selection_tournament(0.8),
+          MeowNx.Ops.Permutation.crossover_order(),
+          MeowNx.Ops.Permutation.mutation_inversion(0.5)
+        ])
+      ]),
+      Meow.Ops.emigrate(MeowNx.Ops.selection_natural(5), &Meow.Topology.ring/2, interval: 10),
+      Meow.Ops.immigrate(&MeowNx.Ops.selection_natural(&1), interval: 10),
+      MeowNx.Ops.log_best_individual(),
+      MeowNx.Ops.log_metrics(%{fitness_max: &MeowNx.Metric.fitness_max/2}, interval: 10),
+      Meow.Ops.max_generations(100)
+    ]),
+    duplicate: 6
+  )
+
+report = Meow.run(algorithm)
+
+report |> Meow.Report.format_summary() |> IO.puts()
+
+Meow.Report.plot_metrics(report)
+```
+
+```elixir
+best_permutation =
+  report.population_reports
+  |> Enum.map(& &1.population.log.best_individual)
+  |> Enum.max_by(& &1.fitness)
+  |> Map.get(:genome)
+  |> Nx.to_flat_list()
+```
+
+```elixir
+coordinates_in_order = for idx <- best_permutation, do: Enum.at(coordinates, idx)
+
+visualize_route.(coordinates_in_order)
+```
+
+## Performance evaluation
+
+### Comparison against other frameworks
+
+<!-- livebook:{"break_markdown":true} -->
+
+![](images/comparison_rastrigin.png)
+
+<!-- livebook:{"break_markdown":true} -->
+
+### Comparison with EASEA (GPU)
+
+<!-- livebook:{"break_markdown":true} -->
+
+![](images/comparison_weierstrass.png)
+
+## Design
+
+### Operations API
+
+<!-- livebook:{"break_markdown":true} -->
+
+Numerical definition:
+
+<!-- livebook:{"force_markdown":true} -->
+
+```elixir
+defn bit_flip(genomes, opts \\ []) do
+  shape = Nx.shape(genomes)
+
+  # Mutate each gene separately with the given probability
+  mutate? = Nx.random_uniform(shape) |> Nx.less(opts[:probability])
+  mutated = Nx.subtract(1, genomes)
+  Nx.select(mutate?, mutated, genomes)
+end
+```
+
+Operation metadata:
+
+<!-- livebook:{"force_markdown":true} -->
+
+```elixir
+def mutation_bit_flip(probability) do
+  %Op{
+    name: "[Nx] Mutation: bit flip",
+    requires_fitness: false,
+    invalidates_fitness: true,
+    in_representations: [MeowNx.binary_representation()],
+    impl: fn population, _ctx ->
+      new_genomes = bit_flip(genomes, probability: probability)
+      %{population | genomes: new_genomes}
+    end
+  }
+end
+```
+
+<!-- livebook:{"break_markdown":true} -->
+
+### Distribution
+
+<!-- livebook:{"break_markdown":true} -->
+
+<!-- livebook:{"force_markdown":true} -->
+
+```elixir
+Meow.Distribution.init_from_cli_args!(fn nodes ->
+  report = Meow.run(algorithm, nodes: nodes)
+end)
+```
+
+Leader node:
+
+```
+$ elixir --name leader@127.0.0.1 script.exs leader worker1@127.0.0.1 worker2@127.0.0.1
+```
+
+Worker nodes:
+
+```
+$ elixir --name worker1@127.0.0.1 script.exs worker
+
+$ elixir --name worker2@127.0.0.1 script.exs worker
+```
+
+<!-- livebook:{"break_markdown":true} -->
+
+![](images/distribution.png)
+
+## In retrospect
+
+![](images/meow.jpeg)
+
+## Opportunities
+
+1. Compiling the whole algorithm as a single computation.
+
+2. `Nx.Random`
+
+3. Automatic vectorization.
+
+4. General abstraction for distributed Nx.
+
+## Key points
+
+1. Nx brings exciting domains to Elixir.
+
+2. Nx is already solid and keeps growing.
+
+## More Nx
+
+* [ElixirConf 2022 - Chris Grainger - The Future AI Stack](https://youtu.be/Y2Nr4dNu6hI)
+
+* [Nx for Absolute Beginners](https://dockyard.com/blog/2022/03/15/nx-for-absolute-beginners) / [What is Machine Learning Anyway?](https://dockyard.com/blog/2022/06/21/what-is-machine-learning-anyway)
+
+* [#machine-learning on Erlef Slack](https://erlef.org/wg/machine-learning)

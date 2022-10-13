@@ -1,0 +1,51 @@
+# Evolutionary algorithms
+
+## When to use?
+
+### "Typical" optimisation
+
+Multivariate functions, especially non-continous or hard to optimise with gradient-based methods.
+
+Example: Rastrigin function.
+
+<!-- livebook:{"break_markdown":true} -->
+
+![](images/rastrigin.png)
+
+<!-- livebook:{"break_markdown":true} -->
+
+### Combinatorial optimisation
+
+Problems with huge numerical complexity.
+
+Example: given a list of cities find the shortest route through all of them.
+
+<!-- livebook:{"break_markdown":true} -->
+
+![](images/tsp.png)
+
+<!-- livebook:{"break_markdown":true} -->
+
+### In general
+
+<!-- livebook:{"break_markdown":true} -->
+
+![](images/ea_objective.png)
+
+## Evolutionary approach
+
+A single iteration of a simple evolutionary algorithm:
+
+<!-- livebook:{"break_markdown":true} -->
+
+![](images/evolution_flow.png)
+
+## Key characteristics
+
+1. Algorithm is specific to each problem, no one-size-fits-all.
+
+2. Evolutionary algorithms are inherently parallelizable on many levels.
+
+<!-- livebook:{"break_markdown":true} -->
+
+[Meow ->](3_meow.livemd)

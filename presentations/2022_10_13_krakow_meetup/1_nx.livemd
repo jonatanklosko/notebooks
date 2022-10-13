@@ -1,0 +1,77 @@
+# Numerical Elixir (Nx)
+
+```elixir
+Mix.install([
+  {:nx, "~> 0.3.0"},
+  {:exla, "~> 0.3.0"},
+  {:torchx, "~> 0.3.0"}
+])
+```
+
+## Tensors
+
+```elixir
+t =
+  Nx.tensor([
+    [1, 2, 3],
+    [4, 5, 6]
+  ])
+```
+
+```elixir
+Nx.multiply(t, 2)
+```
+
+## Backends
+
+```elixir
+Nx.default_backend(Torchx.Backend)
+```
+
+```elixir
+t =
+  Nx.tensor([
+    [1, 2, 3],
+    [4, 5, 6]
+  ])
+```
+
+```elixir
+Nx.multiply(t, 2)
+```
+
+## Numerical definitions
+
+```elixir
+defmodule NxIntro do
+  import Nx.Defn
+
+  defn mean(tensor) do
+    Nx.sum(tensor) / Nx.size(tensor)
+  end
+end
+```
+
+```elixir
+Nx.Defn.default_options(compiler: EXLA)
+```
+
+```elixir
+t =
+  Nx.tensor([
+    [1, 2, 3],
+    [4, 5, 6]
+  ])
+
+NxIntro.mean(t)
+```
+
+## Key points
+
+1. Nx enables efficient numerical computation in Elixir.
+
+2. Nx provides **a single** Elixir API on top of **multiple** low-level acceleration technologies.
+
+<!-- livebook:{"break_markdown":true} -->
+
+[Evolutionary algorithms ->](2_evolutionary_algorithms.livemd)

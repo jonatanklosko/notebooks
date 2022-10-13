@@ -10,23 +10,30 @@ regular pages.
 
 Pretty much regular articles, but all interactive!
 
-* [IO architecture](articles/io_architecture.livemd) - learn how IO
+- [IO architecture](articles/io_architecture.livemd) - learn how IO
   abstraction works in Erlang and Elixir
-* [Using :httpc securely](articles/httpc_security.livemd) - make secure
+- [Using :httpc securely](articles/httpc_security.livemd) - make secure
   requests using the built-in `:httpc` module
-* [Binary construction](articles/binary_construction.livemd) - see how
+- [Binary construction](articles/binary_construction.livemd) - see how
   to leverage runtime optimisations when constructing large binaries
-* [State synchronization with state reducers](articles/state_sync_and_reducers.livemd) -
+- [State synchronization with state reducers](articles/state_sync_and_reducers.livemd) -
   solving shared, distributed state with serialized data operations
 
 ### Examples
 
-Random samples showcasing Livebook use cases.
+Random examples showcasing Livebook features.
 
-* [Plotting GitHub stats](examples/plotting_gh_stats.livemd) - replicating
+- [Plotting GitHub stats](examples/plotting_gh_stats.livemd) - replicating
   GitHub plots using `vega_lite`
-* [Searching movies on IMDb](examples/searching_movies_on_imdb.livemd) - scraping
+- [Searching movies on IMDb](examples/searching_movies_on_imdb.livemd) - scraping
   and presenting movies data from IMDb
+
+### Presentations
+
+Notebooks from presentations.
+
+- [Evolutionary algorithms with Elixir Nx](presentations/2022_10_13_krakow_meetup/0_intro.livemd) -
+  Krakow Erlang & Elixir Meetup October 2022
 
 ### Templates
 
@@ -34,10 +41,10 @@ Livebook templates are very simple notebooks that include boilerplate
 code, like installing dependencies. Having these in place, you can import
 or fork them and jump straight into coding.
 
-* [Nx](templates/nx.livemd)
-* [Nx/EXLA](templates/nx_exla.livemd)
-* [Nx/EXLA benchmarking](templates/nx_exla_bench.livemd)
-* [HTTP requests](templates/req.livemd)
+- [Nx](templates/nx.livemd)
+- [Nx/EXLA](templates/nx_exla.livemd)
+- [Nx/EXLA benchmarking](templates/nx_exla_bench.livemd)
+- [HTTP requests](templates/req.livemd)
 
 <!-- livebook:{"break_markdown":true} -->
 

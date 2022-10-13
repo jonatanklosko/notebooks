@@ -1,0 +1,9 @@
+# Evolutionary algorithms with Elixir Nx
+
+## What is Meow?
+
+A high-performance framework for building **evolutionary algorithms** in Elixir based on **Nx** and **Erlang distribution**.
+
+<!-- livebook:{"break_markdown":true} -->
+
+[Nx ->](1_nx.livemd)
