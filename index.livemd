@@ -28,11 +28,11 @@ Random examples showcasing Livebook features.
 - [Searching movies on IMDb](examples/searching_movies_on_imdb.livemd) - scraping
   and presenting movies data from IMDb
 
-### Presentations
+### Talks
 
-Notebooks from presentations.
+Notebooks from live presentations.
 
-- [Evolutionary algorithms with Elixir Nx](presentations/2022_10_13_krakow_meetup/0_intro.livemd) -
+- [Evolutionary algorithms with Elixir Nx](presentations/2022_10_meetup/0_intro.livemd) -
   Krakow Erlang & Elixir Meetup October 2022
 
 ### Templates
