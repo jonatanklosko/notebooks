@@ -34,6 +34,8 @@ Notebooks from live presentations.
 
 - [Evolutionary algorithms with Elixir Nx](presentations/2022_10_meetup/0_intro.livemd) -
   Krakow Erlang & Elixir Meetup October 2022
+- [Powerful Machine Learning at your fingertips](presentations/2023_04_elixirconf_eu) -
+  ElixirConf EU April 2022
 
 ### Templates
 
